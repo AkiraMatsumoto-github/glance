@@ -10,4 +10,4 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 | [docs/01_design/data_sources.md](docs/01_design/data_sources.md) | データ取得（GA4・GSC・Bing のバッチ） |
 | [docs/01_design/database_design.md](docs/01_design/database_design.md) | DB 設計 |
 | [docs/01_design/api_design.md](docs/01_design/api_design.md) | 集計 API（問い合わせ指定） |
-| [docs/01_design/ai_query_design.md](docs/01_design/ai_query_design.md) | 生成 AI による問い合わせ |
+| [docs/01_design/ai_query_design.md](docs/01_design/ai_query_design.md) | 生成 AI（全体サマリー・会話） |
