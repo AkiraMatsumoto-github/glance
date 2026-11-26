@@ -82,7 +82,7 @@ glance/
 6. 利用者（`users`）を作るか更新し、更新トークンを暗号化して入れる。
 7. セッションを作り、`/` へ戻す。
 
-**更新トークンがもらえないとき**: Google は、2回目以降の同意では更新トークンを返さない。戻ってきたときに更新トークンがなく、保存済みのものもない（または失効している）ときは、`prompt=consent` を付けてもう一度同意画面へ送る。
+**更新トークンがもらえないとき**: Google は、2回目以降の同意では更新トークンを返さない。戻ってきたときに更新トークンがなく、保存済みのものもないときは、`prompt=consent` を付けてもう一度同意画面へ送る。保存済みの更新トークンが失効したとき（API が `reauth_required` を返したとき）は、ログイン画面のボタンが `prompt=consent` 付きになり、同意画面を出してもらい直す。
 
 **セッション**
 
@@ -97,7 +97,7 @@ glance/
 
 ## 5. トークンの暗号化
 
-- Fernet（`cryptography`）で暗号化して DB に入れる。鍵は `/etc/glance/glance.env` の `GLANCE_TOKEN_KEY`。
+- Fernet（`cryptography`）で暗号化して DB に入れる。鍵は `/etc/glance/glance.env` の `GLANCE_TOKEN_KEY`。作り方は `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`（出てきた値を env に直接書き、どこにも貼らない）。
 - 鍵を入れ替えるときは、新しい鍵と古い鍵を並べて読み（`MultiFernet`）、保存し直すときに新しい鍵で暗号化する。
 
 ## 6. API（1番目の段階の分）
@@ -119,11 +119,11 @@ glance/
 
 ### 6.1 `GET /api/realtime`
 
-- サイトごとに、[data_sources.md](data_sources.md) §5 の5回の呼び出しを行う。全サイト・全呼び出しを並行して行う（非同期のクライアント）。
+- サイトごとに、[data_sources.md](data_sources.md) §5 の6回の呼び出しを行う。全サイト・全呼び出しを並行して行う（非同期のクライアント）。
 - 1サイトの待ち時間の上限は10秒。超えたサイト、失敗したサイトは `status: "error"` にし、ほかのサイトの結果は返す。
 - `minutesAgo` は値のない分を 0 で埋め、30分前から今までの30個にそろえる。
 - 合計は返さない。画面で、選んだサイトを足して出す（[screen_design.md](screen_design.md) §3）。
-- 上位の記事は、サイトごとの上位20件だけを返す。全サイトをまとめた上位20件は、画面で選んだサイトに合わせて画面が並べ直す（[screen_design.md](screen_design.md) §3）。
+- 上位のページは、サイトごとの上位20件だけを返す。全サイトをまとめた上位20件は、画面で選んだサイトに合わせて画面が並べ直す（[screen_design.md](screen_design.md) §3）。
 - 結果は DB に入れない。キャッシュもしない（押すたびに取る）。
 
 応答の形（数字は例）:
@@ -142,8 +142,9 @@ glance/
         {"minutes_ago": 28, "page_views": 5, "active_users": 4}
       ],
       "top_pages": [{"title": "記事のタイトル", "page_views": 12, "active_users": 8}],
-      "devices": [{"key": "mobile", "page_views": 80, "active_users": 30}],
-      "countries": [{"key": "JP", "page_views": 98, "active_users": 37}]
+      "devices": [{"key": "mobile", "active_users": 30}],
+      "countries": [{"key": "JP", "active_users": 37}],
+      "events": [{"name": "page_view", "event_count": 120}]
     },
     {"site_id": 2, "name": "TechShift", "status": "error", "error": "timeout"}
   ]

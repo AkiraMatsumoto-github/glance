@@ -48,14 +48,6 @@ async def test_login_rejected_without_allowed_email(database_url: str) -> None:
     assert response.headers["location"] == "/login?error=not_allowed"
 
 
-async def test_login_without_fake_mode_is_not_available_yet(database_url: str) -> None:
-    app = create_app(make_settings(database_url, fake_google=False))
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as c:
-        response = await c.get("/api/auth/login")
-    await app.state.engine.dispose()
-    assert response.headers["location"] == "/login?error=failed"
-
-
 async def test_expired_session_is_rejected(logged_in: AsyncClient, database_url: str) -> None:
     url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(url, autocommit=True) as conn:
@@ -74,6 +66,11 @@ async def test_write_requires_json(logged_in: AsyncClient) -> None:
 def test_fake_mode_refuses_public_url(database_url: str) -> None:
     with pytest.raises(ValueError):
         create_app(make_settings(database_url, public_url="https://glance.example.com"))
+
+
+def test_google_mode_requires_settings(database_url: str) -> None:
+    with pytest.raises(ValueError, match="GLANCE_TOKEN_KEY"):
+        create_app(make_settings(database_url, fake_google=False, token_key=""))
 
 
 async def test_unknown_api_path_is_json_404(client: AsyncClient) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 import psycopg
 import pytest
 from alembic import command
+from cryptography.fernet import Fernet
 from alembic.config import Config
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -19,6 +20,7 @@ from glance.main import create_app
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DB = "glance_test"
 EMAIL = "tester@example.com"
+TOKEN_KEY = Fernet.generate_key().decode()
 
 
 @pytest.fixture(scope="session")
@@ -51,6 +53,9 @@ def make_settings(database_url: str, **overrides: object) -> Settings:
         "public_url": "http://localhost:3100",
         "fake_google": True,
         "static_dir": "/nonexistent",
+        "google_client_id": "test-client.apps.googleusercontent.com",
+        "google_client_secret": "test-secret",
+        "token_key": TOKEN_KEY,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]

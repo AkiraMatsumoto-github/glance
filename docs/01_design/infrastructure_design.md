@@ -77,10 +77,10 @@ Glance の DB は数GB 規模になる（[database_design.md](database_design.md
 - **OAuth 同意画面**
   - 公開ステータスは「本番」にする。「テスト」のままだと、Gmail アカウントの更新トークンが7日で切れ、毎週ログインし直すことになる。
   - Google の審査は外販の前まで受けない。それまでは「確認されていないアプリ」という警告が出るが、自分で使う分には先に進める。審査前は利用者100人まで。
-- **GCP プロジェクト**: OAuth クライアントは、いったん LogiShift で使っている GCP プロジェクトに作る（2026-11-26 決定）。プロジェクトの ID は git に書かない。
-  - OAuth 同意画面は、プロジェクトに1つしかない。LogiShift の Google 広告の OAuth クライアントが同じプロジェクトにあるなら、同意画面のアプリ名と公開ステータスは広告と共用になり、「本番」に切り替えると広告の側にも効く。作る前に確かめる（利用者）。
-  - 外販の前に、Glance 専用のプロジェクトに移す。Google の審査は、そのプロジェクトで受ける。
-  - 使う API（Google Analytics Data API・Google Analytics Admin API・Search Console API）を、このプロジェクトで有効にする。
+- **GCP プロジェクト**: OAuth クライアントは、LogiShift とは別の GCP プロジェクトに作った（2026-11-26 利用者が設定済み。最初は LogiShift のプロジェクトの予定だったが変えた）。プロジェクトの ID は git に書かない。
+  - 同意画面は、手元で試す間は「テスト」で、自分をテストユーザーに入れている。VPS に出すときに「本番」に切り替え、本番のリダイレクト URI を足す。
+  - 外販の前に、Google の審査をこのプロジェクトで受ける。
+  - 使う API（Google Analytics Data API・Google Analytics Admin API）を有効にした。Search Console API は2番目の段階で有効にする。
 - 実装の手順（ログインの流れ、セッション、トークンの暗号化）は [technical_design.md](technical_design.md) §4・§5。
 
 ## 6. 秘密の置き場所

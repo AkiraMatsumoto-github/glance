@@ -5,7 +5,7 @@ import type { OkSite } from "@/lib/types";
 const NUM = "text-right tabular-nums";
 const LIMIT = 20;
 
-// いま読まれている記事。選んだサイトの記事をまとめて PV の多い順に20件（docs/01_design/screen_design.md §3）。
+// いま見られているページ。選んだサイトのページをまとめて PV の多い順に20件（docs/01_design/screen_design.md §3）。
 // API はサイトごとの上位20件を返すので、どのサイトの組み合わせでも上位20件はこの中に入る
 export function TopPages({ sites, colors }: { sites: OkSite[]; colors: Map<number, string> }) {
   const rows = sites
@@ -14,7 +14,7 @@ export function TopPages({ sites, colors }: { sites: OkSite[]; colors: Map<numbe
     .slice(0, LIMIT);
 
   if (rows.length === 0) {
-    return <p className="px-4 py-6 text-ink-3">直近30分に読まれた記事はありません。</p>;
+    return <p className="px-4 py-6 text-ink-3">直近30分に見られたページはありません。</p>;
   }
   return (
     // スマホではタイトルが潰れないよう、表を横にスクロールさせる

@@ -1,7 +1,6 @@
 """GA4 の呼び出しの入口。
 
-本物（Data API・Admin API）は2番目の段階で Google ログインをつないでから作る。
-それまでは、手元でフェイク（glance.google.fake）だけを使う。
+本物は glance.google.real（Data API・Admin API）、手元とテスト用のダミーは glance.google.fake。
 """
 
 from dataclasses import dataclass
@@ -18,10 +17,6 @@ class Ga4PermissionDenied(Exception):
 
 class Ga4QuotaExceeded(Exception):
     """GA4 の API の上限に当たった。"""
-
-
-class Ga4NotConfigured(Exception):
-    """Google の接続がまだ設定されていない。"""
 
 
 @dataclass(frozen=True)
@@ -71,9 +66,16 @@ BreakdownDimension = Literal["deviceCategory", "countryId"]
 
 @dataclass(frozen=True)
 class BreakdownRow:
+    """デバイス・国はユーザーの属性なので、UU だけを持つ。"""
+
     key: str  # deviceCategory の値（mobile など）、または countryId（ISO 3166-1 の2文字。JP など）
-    page_views: int
     active_users: int
+
+
+@dataclass(frozen=True)
+class EventRow:
+    name: str  # イベント名（page_view、独自のイベントなど）
+    event_count: int
 
 
 class Ga4Client(Protocol):
@@ -102,5 +104,9 @@ class Ga4Client(Protocol):
     async def realtime_breakdown(
         self, property_id: str, dimension: BreakdownDimension, limit: int
     ) -> list[BreakdownRow]:
-        """軸ごとの PV・UU（deviceCategory が4回目、countryId が5回目）。PV の多い順。"""
+        """軸ごとの UU（deviceCategory が4回目、countryId が5回目）。UU の多い順。"""
+        ...
+
+    async def realtime_events(self, property_id: str, limit: int) -> list[EventRow]:
+        """イベント名ごとの回数（eventName。6回目）。回数の多い順。"""
         ...

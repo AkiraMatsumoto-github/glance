@@ -1,0 +1,159 @@
+"""本物の GA4 クライアントの、応答の読み取りとエラーの変換（Google の応答は作って渡す）。"""
+
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from google.analytics.data_v1beta import RunRealtimeReportResponse
+from google.api_core import exceptions as api_errors
+from google.auth.exceptions import RefreshError
+
+from glance.auth.crypto import TokenCipher
+from glance.google.ga4 import Ga4PermissionDenied, Ga4QuotaExceeded, ReauthRequired
+from glance.google.real import RealGa4Client
+
+
+class ValidCredentials:
+    valid = True
+
+
+class ExpiredCredentials:
+    valid = False
+
+    def refresh(self, request: Any) -> None:
+        raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+
+def response(rows: list[tuple[list[str], list[str]]]) -> RunRealtimeReportResponse:
+    return RunRealtimeReportResponse(
+        rows=[
+            {"dimension_values": [{"value": d} for d in dims], "metric_values": [{"value": m} for m in metrics]}
+            for dims, metrics in rows
+        ]
+    )
+
+
+class DataStub:
+    def __init__(self, result: Any) -> None:
+        self.result = result
+        self.requests: list[Any] = []
+
+    async def run_realtime_report(self, request: Any) -> Any:
+        self.requests.append(request)
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def client(data: Any = None, admin: Any = None, credentials: Any = None) -> RealGa4Client:
+    return RealGa4Client(credentials or ValidCredentials(), data_client=data or DataStub(None), admin_client=admin or object())  # type: ignore[arg-type]
+
+
+async def test_totals() -> None:
+    data = DataStub(response([([], ["120", "45", "2"])]))
+    totals = await client(data).realtime_totals("123")
+    assert (totals.page_views, totals.active_users, totals.key_events) == (120, 45, 2)
+    request = data.requests[0]
+    assert request.property == "properties/123"
+    assert [m.name for m in request.metrics] == ["screenPageViews", "activeUsers", "keyEvents"]
+
+
+async def test_totals_with_no_rows_is_zero() -> None:
+    totals = await client(DataStub(response([]))).realtime_totals("123")
+    assert (totals.page_views, totals.active_users, totals.key_events) == (0, 0, 0)
+
+
+async def test_per_minute_reads_minutes_ago() -> None:
+    data = DataStub(response([(["00"], ["5", "3"]), (["12"], ["2", "2"])]))
+    rows = await client(data).realtime_per_minute("123")
+    assert [(r.minutes_ago, r.page_views, r.active_users) for r in rows] == [(0, 5, 3), (12, 2, 2)]
+    assert data.requests[0].dimensions[0].name == "minutesAgo"
+
+
+async def test_top_pages_by_pv_and_breakdown_by_uu() -> None:
+    data = DataStub(response([(["記事 A"], ["12", "8"])]))
+    pages = await client(data).realtime_top_pages("123", 20)
+    assert pages[0].title == "記事 A" and pages[0].page_views == 12
+    request = data.requests[0]
+    assert request.limit == 20
+    assert request.order_bys[0].metric.metric_name == "screenPageViews" and request.order_bys[0].desc
+    data = DataStub(response([(["JP"], ["37"])]))
+    rows = await client(data).realtime_breakdown("123", "countryId", 10)
+    assert (rows[0].key, rows[0].active_users) == ("JP", 37)
+    request = data.requests[0]
+    assert [m.name for m in request.metrics] == ["activeUsers"]
+    assert request.order_bys[0].metric.metric_name == "activeUsers"
+
+
+async def test_events_by_count() -> None:
+    data = DataStub(response([(["page_view"], ["120"]), (["cta_click"], ["4"])]))
+    rows = await client(data).realtime_events("123", 20)
+    assert [(r.name, r.event_count) for r in rows] == [("page_view", 120), ("cta_click", 4)]
+    request = data.requests[0]
+    assert request.dimensions[0].name == "eventName"
+    assert [m.name for m in request.metrics] == ["eventCount"]
+    assert request.order_bys[0].metric.metric_name == "eventCount" and request.limit == 20
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (api_errors.PermissionDenied("no"), Ga4PermissionDenied),
+        (api_errors.NotFound("no"), Ga4PermissionDenied),
+        (api_errors.ResourceExhausted("quota"), Ga4QuotaExceeded),
+        (api_errors.Unauthenticated("expired"), ReauthRequired),
+    ],
+)
+async def test_errors_are_mapped(error: Exception, expected: type[Exception]) -> None:
+    with pytest.raises(expected):
+        await client(DataStub(error)).realtime_totals("123")
+
+
+async def test_revoked_refresh_token_needs_reauth() -> None:
+    with pytest.raises(ReauthRequired):
+        await client(DataStub(response([])), credentials=ExpiredCredentials()).realtime_totals("123")
+
+
+async def test_admin_reads_accounts_and_property() -> None:
+    class Pager:
+        def __init__(self, items: list[Any]) -> None:
+            self.items = items
+
+        def __aiter__(self):  # type: ignore[no-untyped-def]
+            async def gen():  # type: ignore[no-untyped-def]
+                for item in self.items:
+                    yield item
+
+            return gen()
+
+    class AdminStub:
+        async def list_account_summaries(self) -> Pager:
+            return Pager(
+                [
+                    SimpleNamespace(
+                        account="accounts/800",
+                        display_name="アカウント",
+                        property_summaries=[SimpleNamespace(property="properties/900", display_name="LogiShift")],
+                    )
+                ]
+            )
+
+        async def get_property(self, name: str) -> Any:
+            assert name == "properties/900"
+            return SimpleNamespace(display_name="LogiShift", time_zone="Asia/Tokyo")
+
+    c = client(admin=AdminStub())
+    accounts = await c.list_account_summaries()
+    assert accounts[0].account_id == "800" and accounts[0].properties[0].property_id == "900"
+    info = await c.get_property("900")
+    assert (info.name, info.time_zone) == ("LogiShift", "Asia/Tokyo")
+
+
+def test_token_cipher_rotation() -> None:
+    from cryptography.fernet import Fernet
+
+    old, new = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    encrypted = TokenCipher(old).encrypt("secret")
+    rotated = TokenCipher(f"{new},{old}")
+    assert rotated.decrypt(encrypted) == "secret"
+    assert TokenCipher(new).decrypt(rotated.encrypt("secret")) == "secret"

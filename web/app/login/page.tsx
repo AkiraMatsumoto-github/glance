@@ -15,10 +15,19 @@ const MESSAGES: Record<string, string> = {
   failed: "ログインできませんでした。時間をおいてもう一度試してください。",
 };
 
-function LoginMessage() {
+// ログインは FastAPI が受ける（Google の同意画面へ送る）。許可が切れたときは、同意画面を必ず出して
+// 更新トークンをもらい直す（2回目以降の同意では、Google は更新トークンを返さないため）
+function LoginForm() {
   const error = useSearchParams().get("error");
-  if (!error) return null;
-  return <Notice className="w-full text-left">{MESSAGES[error] ?? MESSAGES.failed}</Notice>;
+  const href = error === "reauth" ? "/api/auth/login?prompt=consent" : "/api/auth/login";
+  return (
+    <>
+      <a href={href} className={buttonVariants({ size: "lg", className: "w-full" })}>
+        Google でログイン
+      </a>
+      {error && <Notice className="w-full text-left">{MESSAGES[error] ?? MESSAGES.failed}</Notice>}
+    </>
+  );
 }
 
 export default function LoginPage() {
@@ -27,12 +36,8 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardContent className="flex flex-col items-center gap-6 py-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">Glance</h1>
-          {/* ログインは FastAPI が受ける（Google の同意画面へ送る） */}
-          <a href="/api/auth/login" className={buttonVariants({ size: "lg", className: "w-full" })}>
-            Google でログイン
-          </a>
           <Suspense>
-            <LoginMessage />
+            <LoginForm />
           </Suspense>
         </CardContent>
       </Card>

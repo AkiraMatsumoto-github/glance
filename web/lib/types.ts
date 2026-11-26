@@ -16,8 +16,9 @@ export type GaAccount = { account_id: string; name: string; properties: GaProper
 export type Totals = { page_views: number; active_users: number; key_events: number };
 export type MinuteRow = { minutes_ago: number; page_views: number; active_users: number };
 export type PageRow = { title: string; page_views: number; active_users: number };
-// key は deviceCategory の値（mobile など）か、countryId（JP など）
-export type BreakdownRow = { key: string; page_views: number; active_users: number };
+// key は deviceCategory の値（mobile など）か、countryId（JP など）。ユーザーの属性なので UU だけ
+export type BreakdownRow = { key: string; active_users: number };
+export type EventRow = { name: string; event_count: number };
 
 export type RealtimeErrorKind = "timeout" | "permission_denied" | "quota" | "error";
 
@@ -31,6 +32,7 @@ export type RealtimeSite =
       top_pages: PageRow[];
       devices: BreakdownRow[];
       countries: BreakdownRow[];
+      events: EventRow[];
     }
   | { site_id: number; name: string; status: "error"; error: RealtimeErrorKind };
 

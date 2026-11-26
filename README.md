@@ -4,14 +4,15 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 
 ## 手元で動かす
 
-今できているのは1番目の段階（リアルタイム画面）の、Google につながない部分。Google の代わりにダミーの数字で動かす（フェイクモード。[technical_design.md](docs/01_design/technical_design.md) §11）。
+今できているのは1番目の段階（リアルタイム画面）。Google でログインし、GA4 のリアルタイムの数字を出す。Google を使わずにダミーの数字で動かすこともできる（フェイクモード。[technical_design.md](docs/01_design/technical_design.md) §11）。
 
 1. `.env.example` を `.env` に写し、値を入れる。
    - `GLANCE_DB_PASSWORD`: 手元で決めた長いランダムな文字列
    - `GLANCE_DATABASE_URL`: `postgresql+psycopg://glance:<GLANCE_DB_PASSWORD の値>@127.0.0.1:5434/glance`
-   - `GLANCE_ALLOWED_EMAILS`: ログインに使うメールアドレス（フェイクモードでは、最初のアドレスとしてログインする）
+   - `GLANCE_ALLOWED_EMAILS`: ログインに使う Google アカウントのメールアドレス（フェイクモードでは、最初のアドレスとしてログインする）
    - `GLANCE_PUBLIC_URL`: `http://localhost:3100`
-   - `GLANCE_FAKE_GOOGLE`: `1`
+   - Google でログインするとき: `GLANCE_GOOGLE_CLIENT_ID`・`GLANCE_GOOGLE_CLIENT_SECRET`（GCP の OAuth クライアント。リダイレクト URI に `http://localhost:3100/api/auth/callback` を登録）と、`GLANCE_TOKEN_KEY`（作り方は technical_design.md §5）。`GLANCE_FAKE_GOOGLE` は空
+   - ダミーの数字で動かすとき: `GLANCE_FAKE_GOOGLE` を `1`
 2. DB を起動し、テーブルを作る。
 
    ```bash
@@ -27,7 +28,7 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
    cd web && npm install && npm run dev
    ```
 
-4. http://localhost:3100 を開き、「Google でログイン」→「サイト設定」でダミーのプロパティを追加 →「リアルタイム」。
+4. http://localhost:3100 を開き、「Google でログイン」→「サイト設定」で GA4 のプロパティを追加 →「リアルタイム」。
 
 **テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`
 

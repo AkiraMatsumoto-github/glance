@@ -146,7 +146,7 @@ export function SiteCards({
                 checked={checked}
                 disabled={site.status !== "ok"}
                 onChange={(value) => onToggle(site.site_id, value)}
-                title={site.status === "ok" ? "グラフ・内訳・記事の一覧と合計に入れる" : "取得できなかったサイトは選べません"}
+                title={site.status === "ok" ? "グラフ・内訳・イベント・ページの一覧と合計に入れる" : "取得できなかったサイトは選べません"}
               />
               {site.status === "ok" ? (
                 // 外したサイトは、数字を薄くして「合計などに入っていない」ことを示す

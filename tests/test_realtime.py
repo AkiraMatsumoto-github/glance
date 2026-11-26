@@ -41,9 +41,22 @@ async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
     countries = site["countries"]
     assert 0 < len(countries) <= 10
     assert countries[0]["key"] == "JP"
-    assert [c["page_views"] for c in countries] == sorted((c["page_views"] for c in countries), reverse=True)
+    assert [c["active_users"] for c in countries] == sorted((c["active_users"] for c in countries), reverse=True)
+    # デバイス・国はユーザーの属性なので UU だけ
     for row in site["devices"] + countries:
-        assert set(row) == {"key", "page_views", "active_users"}
+        assert set(row) == {"key", "active_users"}
+
+
+async def test_events(logged_in: AsyncClient) -> None:
+    await add(logged_in, "900000001")
+    site = (await logged_in.get("/api/realtime")).json()["sites"][0]
+    events = site["events"]
+    assert 0 < len(events) <= 20
+    assert set(events[0]) == {"name", "event_count"}
+    assert [e["event_count"] for e in events] == sorted((e["event_count"] for e in events), reverse=True)
+    # page_view の回数は PV と同じ
+    page_view = next(e for e in events if e["name"] == "page_view")
+    assert page_view["event_count"] == site["last_30_min"]["page_views"]
 
 
 async def test_failed_site_does_not_break_others(logged_in: AsyncClient) -> None:

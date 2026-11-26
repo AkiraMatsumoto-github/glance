@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from glance.auth.deps import CurrentUser, Db
 from glance.db.models import Connection, Site, User
 from glance.errors import AppError
-from glance.google.ga4 import Ga4Client, Ga4NotConfigured, Ga4PermissionDenied, ReauthRequired
+from glance.google.ga4 import Ga4Client, Ga4PermissionDenied, ReauthRequired
 
 router = APIRouter(prefix="/api")
 
@@ -53,8 +53,9 @@ class AccountOut(BaseModel):
 def ga4_client(request: Request, user: User) -> Ga4Client:
     try:
         return request.app.state.ga4_factory(user)
-    except Ga4NotConfigured as e:
-        raise AppError(503, "google_not_configured", "Google の接続がまだ設定されていません") from e
+    except ReauthRequired as e:
+        # 更新トークンを持っていない（フェイクのログインの後など）。Google でログインし直してもらう
+        raise AppError(401, "reauth_required", "Google の許可が切れました。ログインし直してください") from e
 
 
 async def _sites(db: Db, tenant_id: int) -> list[Site]:

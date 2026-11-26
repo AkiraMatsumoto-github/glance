@@ -14,6 +14,7 @@ from glance.google.ga4 import (
     AccountSummary,
     BreakdownDimension,
     BreakdownRow,
+    EventRow,
     Ga4PermissionDenied,
     MinuteRow,
     PageRow,
@@ -169,7 +170,8 @@ class FakeGa4Client:
     ) -> list[BreakdownRow]:
         await self._wait()
         self._check_error(property_id)
-        total = sum(r.page_views for r in self._minutes(property_id))
+        # 30分の UU（realtime_totals と同じ考え方で、分ごとの人数の合計より少なくする）を区分に分ける
+        total = round(sum(r.active_users for r in self._minutes(property_id)) * 0.6)
         rng = random.Random(f"{property_id}:{int(self._clock() // 60)}:{dimension}")
         if dimension == "deviceCategory":
             weights = {"mobile": rng.uniform(0.5, 0.75), "desktop": rng.uniform(0.2, 0.45), "tablet": rng.uniform(0.02, 0.07)}
@@ -186,8 +188,34 @@ class FakeGa4Client:
         scale = sum(weights.values())
         rows = []
         for key, weight in weights.items():
-            page_views = round(total * weight / scale)
-            if page_views > 0:
-                rows.append(BreakdownRow(key, page_views, max(1, round(page_views * rng.uniform(0.6, 0.8)))))
-        rows.sort(key=lambda r: r.page_views, reverse=True)
+            active_users = round(total * weight / scale)
+            if active_users > 0:
+                rows.append(BreakdownRow(key, active_users))
+        rows.sort(key=lambda r: r.active_users, reverse=True)
         return rows[:limit]
+
+    async def realtime_events(self, property_id: str, limit: int) -> list[EventRow]:
+        await self._wait()
+        self._check_error(property_id)
+        rows = self._minutes(property_id)
+        page_views = sum(r.page_views for r in rows)
+        users = sum(r.active_users for r in rows)
+        rng = random.Random(f"{property_id}:{int(self._clock() // 60)}:events")
+        # page_view は PV と同じ。ほかは GA4 が自動で送るものと、独自のイベントの例
+        counts = {
+            "page_view": page_views,
+            "user_engagement": round(page_views * rng.uniform(0.6, 0.9)),
+            "scroll": round(page_views * rng.uniform(0.2, 0.4)),
+            "session_start": round(users * rng.uniform(0.5, 0.7)),
+            "first_visit": round(users * rng.uniform(0.2, 0.4)),
+            "click": round(page_views * rng.uniform(0.02, 0.08)),
+            "cta_click": round(page_views * rng.uniform(0.01, 0.05)),
+            "form_start": rng.randint(0, 3),
+            "generate_lead": rng.randint(0, 2),
+            "file_download": rng.randint(0, 2),
+            "video_start": rng.randint(0, 2),
+            "view_search_results": rng.randint(0, 4),
+        }
+        result = [EventRow(name, count) for name, count in counts.items() if count > 0]
+        result.sort(key=lambda r: r.event_count, reverse=True)
+        return result[:limit]

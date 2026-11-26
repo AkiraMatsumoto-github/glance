@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
+from glance.auth.crypto import TokenCipher
 from glance.auth.routes import router as auth_router
 from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
@@ -58,7 +59,9 @@ def create_app(
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
-    app.state.ga4_factory = ga4_factory or default_ga4_factory(settings)
+    # 更新トークンの暗号化（フェイクモードで鍵がないときは使わない）
+    app.state.cipher = TokenCipher(settings.token_key) if settings.token_key else None
+    app.state.ga4_factory = ga4_factory or default_ga4_factory(settings, app.state.cipher)
     app.state.realtime_timeout = realtime_timeout
 
     app.add_exception_handler(AppError, app_error_handler)

@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Notice } from "@/components/notice";
 import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
+import { EventBars } from "@/components/realtime/event-bars";
 import { MinuteChart } from "@/components/realtime/minute-chart";
+import { SeriesLegend } from "@/components/realtime/series-legend";
 import { SiteCards } from "@/components/realtime/site-cards";
 import { TopPages } from "@/components/realtime/top-pages";
 import { Segmented } from "@/components/segmented";
@@ -107,17 +109,20 @@ export default function RealtimePage() {
           />
 
           <section className="rounded-xl border bg-surface">
-            <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-              <h2 className="text-base font-medium">分ごとの推移</h2>
-              <Segmented
-                label="指標"
-                options={[
-                  { value: "page_views", label: "PV" },
-                  { value: "active_users", label: "UU" },
-                ]}
-                value={metric}
-                onChange={setMetric}
-              />
+            <div className="border-b px-4 py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-base font-medium">分ごとの推移</h2>
+                <Segmented
+                  label="指標"
+                  options={[
+                    { value: "page_views", label: "PV" },
+                    { value: "active_users", label: "UU" },
+                  ]}
+                  value={metric}
+                  onChange={setMetric}
+                />
+              </div>
+              {selected.length > 0 && <SeriesLegend sites={selected} colors={colors} showTotal={showTotal} />}
             </div>
             <div className="px-2 py-4">
               {selected.length > 0 ? (
@@ -128,16 +133,19 @@ export default function RealtimePage() {
             </div>
           </section>
 
-          {/* デバイス・国の内訳。サイトの選択が効く */}
+          {/* デバイス・国の内訳とイベント。サイトの選択が効く */}
           {selected.length > 0 && (
-            <div className="grid gap-5 lg:grid-cols-2">
-              <DeviceBars sites={selected} colors={colors} />
-              <CountryBars sites={selected} colors={colors} />
-            </div>
+            <>
+              <div className="grid gap-5 lg:grid-cols-2">
+                <DeviceBars sites={selected} colors={colors} />
+                <CountryBars sites={selected} colors={colors} />
+              </div>
+              <EventBars sites={selected} colors={colors} />
+            </>
           )}
 
           <section className="rounded-xl border bg-surface">
-            <h2 className="border-b px-4 py-3 text-base font-medium">いま読まれている記事（選んだサイトの PV の上位20）</h2>
+            <h2 className="border-b px-4 py-3 text-base font-medium">いま見られているページ（選んだサイトの PV の上位20）</h2>
             {selected.length > 0 ? <TopPages sites={selected} colors={colors} /> : <SelectPrompt />}
           </section>
         </div>
