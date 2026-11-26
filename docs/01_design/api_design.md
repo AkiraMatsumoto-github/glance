@@ -2,7 +2,7 @@
 
 集計の指定（問い合わせ指定）を検証し、SQL に変換して結果を返す部分の設計。AI と画面（ダッシュボードの再集計、全体サマリーの集計）の両方がこの指定を使う。AI がこの指定をどう作るかは [ai_query_design.md](ai_query_design.md)、テーブルは [database_design.md](database_design.md)。
 
-管理コンソール向けの HTTP エンドポイント（チャット、ダッシュボード、サイト設定）は未設計。
+管理コンソール向けの HTTP エンドポイントのうち、1番目の段階の分（ログイン、サイト設定、リアルタイム）は [technical_design.md](technical_design.md) §6。チャット・ダッシュボードの分は未設計。
 
 ---
 

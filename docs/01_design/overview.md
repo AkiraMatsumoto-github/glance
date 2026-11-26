@@ -91,7 +91,7 @@ GA4 Realtime API（5サイト）→ API サーバーでまとめる（貯めな�
 | API サーバー | 問い合わせ指定の検証と SQL 変換（除外の適用を含む）、GA4 のリアルタイム API の呼び出しとサイト横断のまとめ、Gemini の呼び出し | [api_design.md](api_design.md)・[ai_query_design.md](ai_query_design.md)・[data_sources.md](data_sources.md) §5 |
 | 管理コンソール | リアルタイム画面、チャット、結果カード（グラフ・表）、ダッシュボード、サイト設定 | §4 |
 
-技術構成（案。LeadHub と揃える）: Python（uv、FastAPI、SQLAlchemy + Alembic）、Next.js、PostgreSQL、Gemini（google-genai Python SDK、Vertex AI 経由。logishift と同じ）。詳細は技術構成のファイルで決める（§7）。
+技術構成: Python（uv、FastAPI、SQLAlchemy + Alembic）、Next.js（静的書き出し。FastAPI が API と一緒に出す）、PostgreSQL、Gemini（google-genai Python SDK、Vertex AI 経由。logishift と同じ）。詳細は [technical_design.md](technical_design.md)。
 
 グラフ: **Recharts（shadcn/ui の Chart）**（2026-11-26 決定）。GA4 に近い見た目にしやすいため。補助線は横だけ、縦軸の目盛りは右側、比較期間は破線、ホバーで縦線と全系列の値を並べたカードを出す。カードは React のコンポーネントで書けるので作り込みやすく、凡例・ツールチップの文字も React が描くので自動でエスケープされる（§5）。地図や大量のデータの拡大縮小が要るようになったら、Apache ECharts を考え直す。
 
@@ -99,7 +99,7 @@ GA4 Realtime API（5サイト）→ API サーバーでまとめる（貯めな�
 
 ## 4. 主な機能（管理コンソール）
 
-- **リアルタイム（サイト横断）**: 5サイトの直近30分の PV・アクティブユーザー・キーイベント、分ごとの PV の推移、全サイトをまとめた「いま読まれている記事」の上位を1画面で見る。開いたときと「更新」ボタンを押したときだけ GA4 から取る。「AI に聞く」で表示中の結果を AI に渡し、そのまま会話を続けられる。ボットを含む数字であることを画面に注記する（[data_sources.md](data_sources.md) §5）。
+- **リアルタイム（サイト横断）**: 5サイトの直近30分・直近5分の PV・UU（アクティブユーザー）・キーイベント、分ごとの PV・UU の推移、サイトをまたいだ「いま読まれている記事」の上位を1画面で見る。推移と記事の一覧は、出すサイトをチェックボックスで選べる。開いたときと「更新」ボタンを押したときだけ GA4 から取る。「AI に聞く」で表示中の結果を AI に渡し、そのまま会話を続けられる。ボットを含む数字であることを画面に注記する（[data_sources.md](data_sources.md) §5）。
 - **全体サマリー**: ボタンを押すと、AI が GA4・Search Console・Bing の変化から示唆をまとめて出す。示唆ごとに根拠のグラフ・表が付く。
 - **チャット**: いつでも質問できる。全体サマリーの後にそのまま深掘りや打ち手の相談もできる。回答として結果カードと AI の解説が出る。結果カードには、グラフ・表、条件（実際に集計した期間を含む）、適用した除外、データ注記が入る。
 - **除外の切り替え**: 結果カードごとに、除外設定のオン/オフを切り替えられる。
@@ -162,14 +162,15 @@ UTM・参照元・キャンペーン名・検索クエリ・ページパスな�
 | [api_design.md](api_design.md) | 集計 API（問い合わせ指定、SQL への変換、表示のルール、除外設定） | 初版 |
 | [ai_query_design.md](ai_query_design.md) | 生成 AI（全体サマリー・会話。目的、ユースケース、期待値、変化の検出、プロンプト、評価） | 初版 |
 | [infrastructure_design.md](infrastructure_design.md) | インフラ構成（ホスティング、ドメイン、ログイン、秘密の置き場所、バックアップ） | 初版 |
-| technical_design.md | 技術構成（バックエンド・フロントエンドの構成） | 未作成 |
+| [technical_design.md](technical_design.md) | 技術構成（ライブラリ、リポジトリの構成、ログインの手順、API、VPS での動かし方、反映の手順） | 初版（1番目の段階の分） |
+| [screen_design.md](screen_design.md) | 画面設計（画面ごとの配置、状態ごとの出し方、グラフの見た目） | 初版（1番目の段階の分） |
 | design_guideline.md | デザインガイドライン（画面の見た目、グラフの描き方） | 未作成 |
 
 ## 8. 未決事項
 
 - 外販のターゲットの確かめ方（§1.2）
 - 全体サマリーと会話の細部（対象・件数・上限・打ち手の候補など。[ai_query_design.md](ai_query_design.md) の未決事項）
-- Gemini のモデルと接続先（どの GCP プロジェクト・認証方式で呼ぶか）。Google ログインの OAuth クライアントを置く GCP プロジェクトも合わせて決める
+- Gemini のモデルと接続先（どの GCP プロジェクト・認証方式で呼ぶか）。Google ログインの OAuth クライアントは、いったん LogiShift の GCP プロジェクトに置く（[infrastructure_design.md](infrastructure_design.md) §5）
 - 外販するときの製品名。外販の前に、商標（J-PlatPat）も含めて調べて決める。「glance」は同じ分野に同名・似た名前の製品が多い（Glancely、Glancelytics、オープンソースの Glance ダッシュボードなど）
 
 ---
