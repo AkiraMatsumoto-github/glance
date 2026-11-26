@@ -129,3 +129,18 @@ async def test_slow_site_times_out(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]
     assert site["error"] == "timeout"
+
+
+async def test_demo_needs_no_login_and_touches_no_data(client: AsyncClient, database_url: str) -> None:
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    response = await client.get("/api/demo/realtime")
+    assert response.status_code == 200
+    body = response.json()
+    assert [s["name"] for s in body["sites"]] == ["デモサイト A", "デモサイト B", "デモサイト C", "デモサイト D", "デモサイト E"]
+    assert all(s["status"] == "ok" for s in body["sites"])
+    assert response.headers["cache-control"] == "no-store"
+    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(url) as conn:
+        assert conn.execute("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM sites)").fetchone() == (0, 0)

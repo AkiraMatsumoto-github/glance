@@ -30,6 +30,7 @@
   --color-page: var(--page);
   --color-surface: var(--surface);
   --color-hover: var(--hover);
+  --color-axis: var(--axis);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);

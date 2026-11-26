@@ -115,7 +115,8 @@ glance/
 | `POST /api/sites` | サイトを追加する。GA4 のプロパティ ID を受け取り、名前とタイムゾーンを Admin API の `properties.get` から取って入れる。GA4 の接続設定（`connections`）も作る |
 | `PATCH /api/sites/{id}` | 名前・並び順を変える |
 | `DELETE /api/sites/{id}` | サイトを消す（接続設定も消す） |
-| `GET /api/realtime` | 全サイトのリアルタイムを取る（下記） |
+| `GET /api/realtime` | 全サイトのリアルタイムを取る（§6.1） |
+| `GET /api/demo/realtime` | デモ用のダミーの数字（§6.2）。ログイン不要 |
 
 ### 6.1 `GET /api/realtime`
 
@@ -154,9 +155,16 @@ glance/
 - `per_minute` は30個（例では途中を省いた）。
 - `error` の種類: `timeout`（時間切れ）、`permission_denied`（プロパティを見る権限がない）、`quota`（上限に当たった）、`error`（その他）。
 
+### 6.2 `GET /api/demo/realtime`
+
+- ログイン不要。デモの画面（[screen_design.md](screen_design.md) §6）が使う。
+- 手元とテストで使うフェイク（`glance/google/fake.py`）の数字を、`/api/realtime` と同じ集計（`fetch_realtime`）に通して返す。応答の形は §6.1 と同じ。サイトは「デモサイト A〜E」。
+- DB・Google・利用者のデータには触れない（テストで確かめる）。だれが呼んでもダミーしか返らない。
+- API にした理由（2026-11-26）: 項目を足すときはテストと手元の確認のためにフェイクも必ず直すので、デモがそのまま付いてくる。固定の JSON を画面に置く形だと、項目を足すたびに作り直しが要る。
+
 ## 7. 画面（Next.js）
 
-- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites` の3つ。中身は [screen_design.md](screen_design.md)。
+- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモ。ログイン不要）の4つ。中身は [screen_design.md](screen_design.md)。
 - データは、画面から `/api` を呼んで取る（ブラウザ側）。401 が返ったら `/login` へ移す（`reauth_required` のときは、理由を出してから移す）。
 - 画面に出す文字は、すべて React が描く（エスケープされる）。`dangerouslySetInnerHTML` は使わない（[overview.md](overview.md) §5）。
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
@@ -39,6 +40,13 @@ export default function LoginPage() {
           <Suspense>
             <LoginForm />
           </Suspense>
+          {/* ログインしない人も、ダミーの数字で画面を試せる（docs/01_design/screen_design.md §6） */}
+          <div className="w-full border-t pt-5">
+            <Link href="/demo" className={buttonVariants({ variant: "outline", size: "lg", className: "w-full" })}>
+              ログインせずにデモを見る
+            </Link>
+            <p className="mt-2 text-xs text-ink-3">ダミーの数字で、リアルタイムの画面を見られます。</p>
+          </div>
         </CardContent>
       </Card>
     </main>

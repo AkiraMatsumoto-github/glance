@@ -22,7 +22,7 @@
 ```
 
 - `source`: `ga4` / `gsc` / `bing`。1つの指定は1つのソースだけを対象にする。
-- `metrics` / `dimensions` は、そのソースの一覧（付録）の ID から選ぶ。時間の軸は `date` / `week` / `month`。
+- `metrics` / `dimensions` は、そのソースの一覧（付録）の ID から選ぶ。時間の軸は `date` / `week` / `month`。GA4 だけ、1時間単位の `hour`（日時）と `hour_of_day`（時間帯。0〜23時）も選べる（`ga4_hourly`。直近31日だけ）。
 - `period`: `this_month` / `last_month` / `this_week` / `last_week` / `last_7_days` / `last_28_days`、または `{"start": "...", "end": "..."}`。週は月曜始まり。「今日」は日本時間で決める。
   - 期間の終わりは、そのソースのデータがある最終日までにする。`last_7_days` / `last_28_days` も、データがある最終日から数える。例: 11/10 に GSC で `this_month` → 11/1〜11/7。
   - 画面と AI には、この実際に集計した期間を出す・渡す。
@@ -37,6 +37,7 @@
 1. **検証する。** 指標・軸がそのソースの一覧にあるか、1つのテーブルにそろうかを確かめる。そろわなければ、出せない理由と、出せる組み合わせを返す。
 2. **テーブルを選ぶ。** 指定のソースのテーブルで、指定の軸をすべて含むもののうち、軸の数が最も少ないものを使う。
    - 軸が日付だけなら `ga4_totals`。
+   - `hour` か `hour_of_day` があれば `ga4_hourly`。使える軸は、チャネル・参照元・メディア・キャンペーン・デバイス・言語だけ。期間が直近31日を超えたら、「1時間単位は直近31日だけです」と、日単位なら出せることを返す。ユーザー数は出せない。
    - UTM の表でチャネルが要るときは、`ga4_channel_map` でつなぐ。
    - ユーザー数は `ga4_users` のみ。期間が日・週・月の単位に合うときはその値を使い、合わなければ日ごとの値を足した延べ人数にする（[database_design.md](database_design.md) の集計のルール）。
 3. **SQL を組み立てる。**
@@ -94,6 +95,7 @@
 | 種類 | ID | 表示名 | GA4 の項目名 |
 |---|---|---|---|
 | 軸 | `date` | 日付 | `date` |
+| 軸 | `hour` / `hour_of_day` | 日時（1時間単位） / 時間帯（0〜23時） | `dateHour`（時間帯は、保存した日時の時の部分。`ga4_hourly` だけ） |
 | 軸 | `channel` | チャネル | `sessionDefaultChannelGroup` |
 | 軸 | `utm_source` | 参照元（utm_source） | `sessionSource` |
 | 軸 | `utm_medium` | メディア（utm_medium） | `sessionMedium` |
