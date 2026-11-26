@@ -122,8 +122,7 @@ glance/
 - サイトごとに、[data_sources.md](data_sources.md) §5 の5回の呼び出しを行う。全サイト・全呼び出しを並行して行う（非同期のクライアント）。
 - 1サイトの待ち時間の上限は10秒。超えたサイト、失敗したサイトは `status: "error"` にし、ほかのサイトの結果は返す。
 - `minutesAgo` は値のない分を 0 で埋め、30分前から今までの30個にそろえる。
-- 直近5分の値は、1回目の呼び出しの2つめの期間から取る（分ごとの値は足さない。[data_sources.md](data_sources.md) §5）。
-- 全サイトの合計は、サーバーで出す。
+- 合計は返さない。画面で、選んだサイトを足して出す（[screen_design.md](screen_design.md) §3）。
 - 上位の記事は、サイトごとの上位20件だけを返す。全サイトをまとめた上位20件は、画面で選んだサイトに合わせて画面が並べ直す（[screen_design.md](screen_design.md) §3）。
 - 結果は DB に入れない。キャッシュもしない（押すたびに取る）。
 
@@ -138,7 +137,6 @@ glance/
       "name": "LogiShift",
       "status": "ok",
       "last_30_min": {"page_views": 120, "active_users": 45, "key_events": 2},
-      "last_5_min": {"page_views": 18, "active_users": 9, "key_events": 0},
       "per_minute": [
         {"minutes_ago": 29, "page_views": 3, "active_users": 2},
         {"minutes_ago": 28, "page_views": 5, "active_users": 4}
@@ -148,17 +146,12 @@ glance/
       "countries": [{"key": "JP", "page_views": 98, "active_users": 37}]
     },
     {"site_id": 2, "name": "TechShift", "status": "error", "error": "timeout"}
-  ],
-  "total": {
-    "last_30_min": {"page_views": 300, "active_users": 110, "key_events": 3},
-    "last_5_min": {"page_views": 40, "active_users": 21, "key_events": 0}
-  }
+  ]
 }
 ```
 
 - `per_minute` は30個（例では途中を省いた）。
 - `error` の種類: `timeout`（時間切れ）、`permission_denied`（プロパティを見る権限がない）、`quota`（上限に当たった）、`error`（その他）。
-- `total` は、`status: "ok"` のサイトだけで出す。
 
 ## 7. 画面（Next.js）
 

@@ -19,7 +19,6 @@ async def test_requires_login(client: AsyncClient) -> None:
 async def test_no_sites(logged_in: AsyncClient) -> None:
     body = (await logged_in.get("/api/realtime")).json()
     assert body["sites"] == []
-    assert body["total"]["last_30_min"] == {"page_views": 0, "active_users": 0, "key_events": 0}
     assert body["fetched_at"].endswith("+09:00")
 
 
@@ -32,9 +31,6 @@ async def test_sites_in_order_with_filled_minutes(logged_in: AsyncClient) -> Non
         assert site["status"] == "ok"
         assert [m["minutes_ago"] for m in site["per_minute"]] == list(range(29, -1, -1))
         assert len(site["top_pages"]) <= 20
-        assert site["last_5_min"]["page_views"] <= site["last_30_min"]["page_views"]
-    total = body["total"]["last_30_min"]
-    assert total["page_views"] == sum(s["last_30_min"]["page_views"] for s in body["sites"])
 
 
 async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
@@ -50,14 +46,14 @@ async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
         assert set(row) == {"key", "page_views", "active_users"}
 
 
-async def test_failed_site_is_excluded_from_total(logged_in: AsyncClient) -> None:
+async def test_failed_site_does_not_break_others(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     await add(logged_in, ERROR_PROPERTY_ID)
     body = (await logged_in.get("/api/realtime")).json()
     ok, failed = body["sites"]
     assert ok["status"] == "ok"
     assert failed == {"site_id": failed["site_id"], "name": failed["name"], "status": "error", "error": "timeout"}
-    assert body["total"]["last_30_min"] == ok["last_30_min"]
+    assert set(body) == {"fetched_at", "sites"}
 
 
 class SparseFake(FakeGa4Client):

@@ -87,8 +87,8 @@ class Ga4Client(Protocol):
         """プロパティの名前とタイムゾーン（Admin API の properties.get）。"""
         ...
 
-    async def realtime_totals(self, property_id: str) -> tuple[Totals, Totals]:
-        """直近30分と直近5分の合計（期間を2つ指定した1回の呼び出し。data_sources.md §5 の1回目）。"""
+    async def realtime_totals(self, property_id: str) -> Totals:
+        """直近30分の合計（軸なし。data_sources.md §5 の1回目）。"""
         ...
 
     async def realtime_per_minute(self, property_id: str) -> list[MinuteRow]:

@@ -6,9 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Notice } from "@/components/notice";
 import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
 import { MinuteChart } from "@/components/realtime/minute-chart";
-import { RealtimeNotes } from "@/components/realtime/notes";
-import { SiteFilter } from "@/components/realtime/site-filter";
-import { SiteTable } from "@/components/realtime/site-table";
+import { SiteCards } from "@/components/realtime/site-cards";
 import { TopPages } from "@/components/realtime/top-pages";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
@@ -81,8 +79,6 @@ export default function RealtimePage() {
         </div>
       </div>
 
-      <RealtimeNotes />
-
       {error && <Notice>{error}</Notice>}
 
       {data === null && loading && <LoadingBlocks />}
@@ -100,10 +96,9 @@ export default function RealtimePage() {
         <div className={cn("space-y-5 transition-opacity", loading && "opacity-50")}>
           {allFailed && <Notice>取得できませんでした。時間をおいて更新してください。</Notice>}
 
-          <SiteTable data={data} colors={colors} />
-
-          <SiteFilter
+          <SiteCards
             sites={data.sites}
+            selected={selected}
             colors={colors}
             isSelected={(id) => okSites.some((s) => s.site_id === id) && !unselected.has(id)}
             onToggle={toggle}

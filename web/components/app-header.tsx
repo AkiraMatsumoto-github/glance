@@ -29,7 +29,8 @@ export function AppHeader() {
   }
 
   return (
-    <header className="border-b bg-surface">
+    // スクロールしても上に固定する。ダイアログ（z-50）より下、本文より上
+    <header className="sticky top-0 z-40 border-b bg-surface">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Glance

@@ -27,7 +27,6 @@ export type RealtimeSite =
       name: string;
       status: "ok";
       last_30_min: Totals;
-      last_5_min: Totals;
       per_minute: MinuteRow[];
       top_pages: PageRow[];
       devices: BreakdownRow[];
@@ -40,7 +39,6 @@ export type OkSite = Extract<RealtimeSite, { status: "ok" }>;
 export type Realtime = {
   fetched_at: string;
   sites: RealtimeSite[];
-  total: { last_30_min: Totals; last_5_min: Totals };
 };
 
 export type Metric = "page_views" | "active_users";

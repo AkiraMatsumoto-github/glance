@@ -127,24 +127,17 @@ class FakeGa4Client:
         if property_id == ERROR_PROPERTY_ID:
             raise TimeoutError(property_id)
 
-    async def realtime_totals(self, property_id: str) -> tuple[Totals, Totals]:
+    async def realtime_totals(self, property_id: str) -> Totals:
         await self._wait()
         self._check_error(property_id)
         rows = self._minutes(property_id)
-        recent = [r for r in rows if r.minutes_ago < 5]
         rng = random.Random(f"{property_id}:{int(self._clock() // 60)}:key")
-        # 同じ人が何分にもまたがるので、30分・5分の人数は分ごとの人数の合計より少ない
-        last_30 = Totals(
+        # 同じ人が何分にもまたがるので、30分の人数は分ごとの人数の合計より少ない
+        return Totals(
             page_views=sum(r.page_views for r in rows),
             active_users=round(sum(r.active_users for r in rows) * 0.6),
             key_events=rng.randint(0, 3),
         )
-        last_5 = Totals(
-            page_views=sum(r.page_views for r in recent),
-            active_users=round(sum(r.active_users for r in recent) * 0.8),
-            key_events=min(last_30.key_events, rng.randint(0, 1)),
-        )
-        return last_30, last_5
 
     async def realtime_per_minute(self, property_id: str) -> list[MinuteRow]:
         await self._wait()

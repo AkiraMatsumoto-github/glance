@@ -40,7 +40,7 @@ async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> 
     base = {"site_id": target.site_id, "name": target.name}
     try:
         async with asyncio.timeout(timeout):
-            (last_30, last_5), minutes, pages, devices, countries = await asyncio.gather(
+            last_30, minutes, pages, devices, countries = await asyncio.gather(
                 client.realtime_totals(target.property_id),
                 client.realtime_per_minute(target.property_id),
                 client.realtime_top_pages(target.property_id, TOP_PAGES),
@@ -76,20 +76,12 @@ async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> 
         **base,
         "status": "ok",
         "last_30_min": _totals(last_30),
-        "last_5_min": _totals(last_5),
         "per_minute": per_minute,
         "top_pages": [
             {"title": p.title, "page_views": p.page_views, "active_users": p.active_users} for p in pages[:TOP_PAGES]
         ],
         "devices": _breakdown(devices),
         "countries": _breakdown(countries[:TOP_COUNTRIES]),
-    }
-
-
-def _sum(sites: list[dict[str, Any]], key: str) -> dict[str, int]:
-    ok = [s for s in sites if s["status"] == "ok"]
-    return {
-        name: sum(s[key][name] for s in ok) for name in ("page_views", "active_users", "key_events")
     }
 
 
@@ -103,7 +95,6 @@ async def fetch_realtime(
     fetched_at = (now or datetime.now(JST)).astimezone(JST)
     return {
         "fetched_at": fetched_at.isoformat(timespec="seconds"),
+        # 合計は画面で、選んだサイトから出す（screen_design.md §3）
         "sites": sites,
-        # 取得できたサイトだけで足す。UU はサイトごとの人数を足したもの
-        "total": {"last_30_min": _sum(sites, "last_30_min"), "last_5_min": _sum(sites, "last_5_min")},
     }
