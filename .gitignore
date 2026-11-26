@@ -1,0 +1,22 @@
+# 環境変数（値は git に入れない。ひな形は .env.example）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+
+# 画面（Next.js）
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+web/*.tsbuildinfo
+
+# その他
+.DS_Store

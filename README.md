@@ -2,6 +2,37 @@
 
 GA4・Search Console・Bing のデータを日次で取り込み、管理コンソールで AI に質問すると集計結果をグラフ・表で返す分析ツール。最初は LogiShift で使い、将来は外販する。
 
+## 手元で動かす
+
+今できているのは1番目の段階（リアルタイム画面）の、Google につながない部分。Google の代わりにダミーの数字で動かす（フェイクモード。[technical_design.md](docs/01_design/technical_design.md) §11）。
+
+1. `.env.example` を `.env` に写し、値を入れる。
+   - `GLANCE_DB_PASSWORD`: 手元で決めた長いランダムな文字列
+   - `GLANCE_DATABASE_URL`: `postgresql+psycopg://glance:<GLANCE_DB_PASSWORD の値>@127.0.0.1:5434/glance`
+   - `GLANCE_ALLOWED_EMAILS`: ログインに使うメールアドレス（フェイクモードでは、最初のアドレスとしてログインする）
+   - `GLANCE_PUBLIC_URL`: `http://localhost:3100`
+   - `GLANCE_FAKE_GOOGLE`: `1`
+2. DB を起動し、テーブルを作る。
+
+   ```bash
+   docker compose up -d
+   uv sync
+   uv run alembic upgrade head
+   ```
+
+3. API と画面を起動する（端末を2つ使う）。
+
+   ```bash
+   uv run uvicorn glance.main:create_app --factory --host 127.0.0.1 --port 8101 --reload
+   cd web && npm install && npm run dev
+   ```
+
+4. http://localhost:3100 を開き、「Google でログイン」→「サイト設定」でダミーのプロパティを追加 →「リアルタイム」。
+
+**テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`
+
+**本番と同じ形で見る**: `cd web && npm run build` で `web/out` に書き出すと、API（8101）が画面も出す。http://127.0.0.1:8101 を開く。
+
 ## 設計書
 
 | ファイル | 内容 |

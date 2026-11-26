@@ -1,0 +1,29 @@
+[project]
+name = "glance"
+version = "0.1.0"
+description = "GA4・Search Console・Bing のデータを AI と分析するツール"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.165",
+    "uvicorn[standard]>=0.54",
+    "sqlalchemy[asyncio]>=2.1",
+    "psycopg[binary]>=3.3",
+    "alembic>=1.20",
+    "pydantic-settings>=2.16",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2",
+    "pytest-asyncio>=1.5",
+    "httpx>=0.28",
+]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

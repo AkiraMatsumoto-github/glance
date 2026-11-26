@@ -93,7 +93,7 @@ GA4 Realtime API（5サイト）→ API サーバーでまとめる（貯めな�
 
 技術構成: Python（uv、FastAPI、SQLAlchemy + Alembic）、Next.js（静的書き出し。FastAPI が API と一緒に出す）、PostgreSQL、Gemini（google-genai Python SDK、Vertex AI 経由。logishift と同じ）。詳細は [technical_design.md](technical_design.md)。
 
-グラフ: **Recharts（shadcn/ui の Chart）**（2026-11-26 決定）。GA4 に近い見た目にしやすいため。補助線は横だけ、縦軸の目盛りは右側、比較期間は破線、ホバーで縦線と全系列の値を並べたカードを出す。カードは React のコンポーネントで書けるので作り込みやすく、凡例・ツールチップの文字も React が描くので自動でエスケープされる（§5）。地図や大量のデータの拡大縮小が要るようになったら、Apache ECharts を考え直す。
+グラフ: **Recharts**（2026-11-26 決定。shadcn/ui の Chart は使わず、直接使う。[technical_design.md](technical_design.md) §2）。GA4 に近い見た目にしやすいため。補助線は横だけ、縦軸の目盛りは右側、比較期間は破線、ホバーで縦線と全系列の値を並べたカードを出す。カードは React のコンポーネントで書けるので作り込みやすく、凡例・ツールチップの文字も React が描くので自動でエスケープされる（§5）。地図や大量のデータの拡大縮小が要るようになったら、Apache ECharts を考え直す。
 
 ホスティング: LeadHub と同じ VPS に同居させ、`glance.crosia.jp` で出す。ログインは Google アカウント。詳細は [infrastructure_design.md](infrastructure_design.md)。
 

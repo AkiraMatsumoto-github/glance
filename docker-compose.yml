@@ -1,0 +1,18 @@
+# 手元の開発用の DB（本番は LeadHub の PostgreSQL のコンテナに入れる。technical_design.md §8・§11）
+# 使い方: docker compose up -d   （.env に GLANCE_DB_PASSWORD を書いてから。README の「手元で動かす」）
+services:
+  db:
+    image: postgres:16
+    container_name: glance-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: glance
+      POSTGRES_USER: glance
+      POSTGRES_PASSWORD: ${GLANCE_DB_PASSWORD:?.env に GLANCE_DB_PASSWORD を書いてください}
+    ports:
+      - "127.0.0.1:5434:5432" # LeadHub の手元の DB（5433）と重ならない
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:

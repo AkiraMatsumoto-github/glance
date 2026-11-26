@@ -1,0 +1,168 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { MinuteChart } from "@/components/realtime/minute-chart";
+import { RealtimeNotes } from "@/components/realtime/notes";
+import { SiteFilter } from "@/components/realtime/site-filter";
+import { SiteTable } from "@/components/realtime/site-table";
+import { TopPages } from "@/components/realtime/top-pages";
+import { Button } from "@/components/ui/button";
+import { api, errorMessage } from "@/lib/api";
+import { formatTime, siteColor } from "@/lib/format";
+import type { Metric, Realtime, RealtimeSite } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+type OkSite = Extract<RealtimeSite, { status: "ok" }>;
+
+// リアルタイム（docs/01_design/screen_design.md §3）。開いたときと「更新」を押したときだけ取る
+export default function RealtimePage() {
+  const [data, setData] = useState<Realtime | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [metric, setMetric] = useState<Metric>("page_views");
+  // 外したサイト。初めは全部オンで、「更新」を押しても保つ（開き直すと全部オンに戻る）
+  const [unselected, setUnselected] = useState<Set<number>>(new Set());
+
+  const fetchRealtime = useCallback(
+    () =>
+      api<Realtime>("/api/realtime")
+        .then(
+          (result) => {
+            setData(result);
+            setError(null);
+          },
+          (e: unknown) => setError(errorMessage(e)),
+        )
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  useEffect(() => {
+    // 開いたときに1回取る
+    void fetchRealtime();
+  }, [fetchRealtime]);
+
+  function refresh() {
+    setLoading(true);
+    void fetchRealtime();
+  }
+
+  const colors = useMemo(
+    () => new Map((data?.sites ?? []).map((site, i) => [site.site_id, siteColor(i)])),
+    [data],
+  );
+  const okSites = (data?.sites ?? []).filter((s): s is OkSite => s.status === "ok");
+  const selected = okSites.filter((s) => !unselected.has(s.site_id));
+  const allFailed = data !== null && data.sites.length > 0 && okSites.length === 0;
+
+  function toggle(siteId: number, checked: boolean) {
+    setUnselected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.delete(siteId);
+      else next.add(siteId);
+      return next;
+    });
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-xl font-semibold">リアルタイム（直近30分）</h1>
+        <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
+          {data && <span>{formatTime(data.fetched_at)} に取得</span>}
+          <Button onClick={refresh} disabled={loading}>
+            {loading ? "取得中…" : "更新"}
+          </Button>
+        </div>
+      </div>
+
+      <RealtimeNotes />
+
+      {error && (
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-background px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+
+      {data === null && loading && <LoadingBlocks />}
+
+      {data !== null && data.sites.length === 0 && (
+        <div className="rounded-xl border bg-background px-6 py-10 text-center text-sm">
+          <p>サイト設定から GA4 のプロパティを追加してください。</p>
+          <Link href="/settings/sites" className="mt-3 inline-block text-primary underline underline-offset-4">
+            サイト設定へ
+          </Link>
+        </div>
+      )}
+
+      {data !== null && data.sites.length > 0 && (
+        <div className={cn("space-y-5 transition-opacity", loading && "opacity-50")}>
+          {allFailed && (
+            <p role="alert" className="text-sm text-destructive">
+              取得できませんでした。時間をおいて更新してください。
+            </p>
+          )}
+
+          <SiteTable data={data} colors={colors} />
+
+          <SiteFilter
+            sites={data.sites}
+            colors={colors}
+            isSelected={(id) => okSites.some((s) => s.site_id === id) && !unselected.has(id)}
+            onToggle={toggle}
+          />
+
+          <section className="rounded-xl border bg-background">
+            <div className="flex items-center gap-3 border-b px-4 py-3">
+              <h2 className="font-medium">分ごとの推移</h2>
+              <div className="flex rounded-lg border p-0.5" role="group" aria-label="指標">
+                {(["page_views", "active_users"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={metric === m}
+                    onClick={() => setMetric(m)}
+                    className={cn(
+                      "rounded-md px-3 py-1 text-sm",
+                      metric === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    {m === "page_views" ? "PV" : "UU"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="px-2 py-4">
+              {selected.length > 0 ? (
+                <MinuteChart sites={selected} colors={colors} metric={metric} />
+              ) : (
+                <SelectPrompt />
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-xl border bg-background">
+            <h2 className="border-b px-4 py-3 font-medium">いま読まれている記事（選んだサイトの PV の上位20）</h2>
+            {selected.length > 0 ? <TopPages sites={selected} colors={colors} /> : <SelectPrompt />}
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SelectPrompt() {
+  return <p className="px-4 py-10 text-center text-sm text-muted-foreground">サイトを選んでください。</p>;
+}
+
+function LoadingBlocks() {
+  return (
+    <div className="space-y-5" aria-busy="true" aria-label="読み込み中">
+      {[40, 72, 64].map((h) => (
+        <div key={h} className="animate-pulse rounded-xl border bg-background" style={{ height: `${h * 4}px` }} />
+      ))}
+    </div>
+  );
+}

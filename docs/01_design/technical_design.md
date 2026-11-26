@@ -38,7 +38,9 @@
 | Google の API | `google-analytics-data`（Data API。リアルタイムも）、`google-analytics-admin`（プロパティの一覧・情報） |
 | Google ログイン | `google-auth`・`google-auth-oauthlib`（Web サーバーの手順、ID トークンの検証） |
 | 暗号化 | `cryptography` の Fernet |
-| 画面 | Next.js（静的書き出し）、React、TypeScript、Tailwind CSS、shadcn/ui、Recharts（shadcn/ui の Chart） |
+| 画面 | Next.js（静的書き出し）、React、TypeScript、Tailwind CSS、shadcn/ui、Recharts |
+
+グラフは Recharts を直接使う。shadcn/ui の Chart（`chart.tsx`）は、色を CSS として差し込むのに `dangerouslySetInnerHTML` を使うため使わない（§7）。
 | 画面のパッケージ管理 | npm |
 
 各ライブラリの版は、実装の最初にその時点の安定版で固める。
@@ -200,7 +202,13 @@ HTML は Cloudflare の既定ではキャッシュされず、JS・CSS はファ
 
 ## 11. 手元での開発
 
-- **DB**: Glance 用の PostgreSQL 16 を Docker で立てる。LeadHub の手元の DB とは別にする。
-- **Google ログイン**: OAuth クライアントの戻り先に、手元の URL（`http://localhost:<ポート>/api/auth/callback`）も登録する。
-- **画面**: `next dev` で動かし、`/api` への要求を手元の FastAPI に中継する（開発のときだけの設定）。
-- **テスト**: API は pytest。Google の API の呼び出しは、記録した応答に差し替えて試す。
+手順は README の「手元で動かす」。
+
+| 項目 | 内容 |
+|---|---|
+| DB | Glance 用の PostgreSQL 16 を Docker で立てる（`docker-compose.yml`。127.0.0.1:5434）。LeadHub の手元の DB とは別にする |
+| API | uvicorn で 127.0.0.1:8101 |
+| 画面 | `next dev` で localhost:3100。`/api` への要求を手元の FastAPI に中継する（開発サーバーのときだけの設定。静的書き出しでは中継が使えないため） |
+| Google ログイン | OAuth クライアントの戻り先に、手元の URL（`http://localhost:3100/api/auth/callback`）も登録する。同意画面は「テスト」のままでよい（自分をテストユーザーに入れる。更新トークンは7日で切れる） |
+| フェイクモード | `GLANCE_FAKE_GOOGLE=1` で、Google を使わずに動かす。ログインは許可リストの最初のメールアドレスになり、GA4 はダミーの数字を返す（`glance/google/fake.py`）。ダミーのプロパティのうち「エラー確認用」は、リアルタイムが必ず時間切れになる。`GLANCE_PUBLIC_URL` が手元の URL でないと起動しない |
+| テスト | API は pytest（手元の DB コンテナに `glance_test` を作って使う）。Google の呼び出しは、フェイクや差し替えたクライアントで試す |

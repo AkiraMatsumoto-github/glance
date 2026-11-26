@@ -127,7 +127,7 @@
 
 ## 5. グラフの見た目（GA4 に近づける）
 
-Recharts（shadcn/ui の Chart）の設定。[overview.md](overview.md) §3。
+Recharts の設定。[overview.md](overview.md) §3。
 
 | 項目 | 設定 |
 |---|---|
