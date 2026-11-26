@@ -16,6 +16,8 @@ export type GaAccount = { account_id: string; name: string; properties: GaProper
 export type Totals = { page_views: number; active_users: number; key_events: number };
 export type MinuteRow = { minutes_ago: number; page_views: number; active_users: number };
 export type PageRow = { title: string; page_views: number; active_users: number };
+// key は deviceCategory の値（mobile など）か、countryId（JP など）
+export type BreakdownRow = { key: string; page_views: number; active_users: number };
 
 export type RealtimeErrorKind = "timeout" | "permission_denied" | "quota" | "error";
 
@@ -28,8 +30,12 @@ export type RealtimeSite =
       last_5_min: Totals;
       per_minute: MinuteRow[];
       top_pages: PageRow[];
+      devices: BreakdownRow[];
+      countries: BreakdownRow[];
     }
   | { site_id: number; name: string; status: "error"; error: RealtimeErrorKind };
+
+export type OkSite = Extract<RealtimeSite, { status: "ok" }>;
 
 export type Realtime = {
   fetched_at: string;

@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class ReauthRequired(Exception):
@@ -65,6 +65,17 @@ class PageRow:
     active_users: int
 
 
+# 内訳に使う軸（data_sources.md §5 の4回目・5回目）
+BreakdownDimension = Literal["deviceCategory", "countryId"]
+
+
+@dataclass(frozen=True)
+class BreakdownRow:
+    key: str  # deviceCategory の値（mobile など）、または countryId（ISO 3166-1 の2文字。JP など）
+    page_views: int
+    active_users: int
+
+
 class Ga4Client(Protocol):
     """1人の利用者の権限で GA4 を呼ぶ。"""
 
@@ -86,4 +97,10 @@ class Ga4Client(Protocol):
 
     async def realtime_top_pages(self, property_id: str, limit: int) -> list[PageRow]:
         """PV の多いページ（unifiedScreenName。3回目）。"""
+        ...
+
+    async def realtime_breakdown(
+        self, property_id: str, dimension: BreakdownDimension, limit: int
+    ) -> list[BreakdownRow]:
+        """軸ごとの PV・UU（deviceCategory が4回目、countryId が5回目）。PV の多い順。"""
         ...

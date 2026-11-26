@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Notice } from "@/components/notice";
+import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
 import { MinuteChart } from "@/components/realtime/minute-chart";
 import { RealtimeNotes } from "@/components/realtime/notes";
 import { SiteFilter } from "@/components/realtime/site-filter";
 import { SiteTable } from "@/components/realtime/site-table";
 import { TopPages } from "@/components/realtime/top-pages";
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { api, errorMessage } from "@/lib/api";
 import { formatTime, siteColor } from "@/lib/format";
-import type { Metric, Realtime, RealtimeSite } from "@/lib/types";
+import type { Metric, OkSite, Realtime } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-type OkSite = Extract<RealtimeSite, { status: "ok" }>;
 
 // リアルタイム（docs/01_design/screen_design.md §3）。開いたときと「更新」を押したときだけ取る
 export default function RealtimePage() {
@@ -25,6 +25,8 @@ export default function RealtimePage() {
   const [metric, setMetric] = useState<Metric>("page_views");
   // 外したサイト。初めは全部オンで、「更新」を押しても保つ（開き直すと全部オンに戻る）
   const [unselected, setUnselected] = useState<Set<number>>(new Set());
+  // 合計の線。初めはオンで、「更新」を押しても保つ
+  const [showTotal, setShowTotal] = useState(true);
 
   const fetchRealtime = useCallback(
     () =>
@@ -105,36 +107,39 @@ export default function RealtimePage() {
             colors={colors}
             isSelected={(id) => okSites.some((s) => s.site_id === id) && !unselected.has(id)}
             onToggle={toggle}
+            showTotal={showTotal}
+            onToggleTotal={setShowTotal}
           />
 
           <section className="rounded-xl border bg-surface">
-            <div className="flex items-center gap-3 border-b px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
               <h2 className="text-base font-medium">分ごとの推移</h2>
-              <div className="flex rounded-lg border p-0.5" role="group" aria-label="指標">
-                {(["page_views", "active_users"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    aria-pressed={metric === m}
-                    onClick={() => setMetric(m)}
-                    className={cn(
-                      "rounded-md px-3 py-0.5 text-sm",
-                      metric === m ? "bg-ink text-white" : "text-ink-2 hover:bg-hover",
-                    )}
-                  >
-                    {m === "page_views" ? "PV" : "UU"}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                label="指標"
+                options={[
+                  { value: "page_views", label: "PV" },
+                  { value: "active_users", label: "UU" },
+                ]}
+                value={metric}
+                onChange={setMetric}
+              />
             </div>
             <div className="px-2 py-4">
               {selected.length > 0 ? (
-                <MinuteChart sites={selected} colors={colors} metric={metric} />
+                <MinuteChart sites={selected} colors={colors} metric={metric} showTotal={showTotal} />
               ) : (
                 <SelectPrompt />
               )}
             </div>
           </section>
+
+          {/* デバイス・国の内訳。サイトの選択が効く */}
+          {selected.length > 0 && (
+            <div className="grid gap-5 lg:grid-cols-2">
+              <DeviceBars sites={selected} colors={colors} />
+              <CountryBars sites={selected} colors={colors} />
+            </div>
+          )}
 
           <section className="rounded-xl border bg-surface">
             <h2 className="border-b px-4 py-3 text-base font-medium">いま読まれている記事（選んだサイトの PV の上位20）</h2>

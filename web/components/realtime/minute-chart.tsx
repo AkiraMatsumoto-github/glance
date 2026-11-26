@@ -4,11 +4,11 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import type { TooltipContentProps } from "recharts";
 
 import { formatAxis, formatNumber } from "@/lib/format";
-import type { Metric, RealtimeSite } from "@/lib/types";
-
-type OkSite = Extract<RealtimeSite, { status: "ok" }>;
+import type { Metric, OkSite } from "@/lib/types";
 
 const METRIC_LABELS: Record<Metric, string> = { page_views: "PV", active_users: "UU" };
+const TOTAL_KEY = "total";
+const TOTAL_COLOR = "var(--ink)"; // 合計はサイトの色を使わず墨色（design_guideline.md §2.2）
 
 function minuteLabel(minutesAgo: number): string {
   return minutesAgo === 0 ? "今" : `${minutesAgo}分前`;
@@ -18,43 +18,73 @@ type ChartProps = {
   sites: OkSite[];
   colors: Map<number, string>;
   metric: Metric;
+  showTotal: boolean;
 };
 
-// ホバーで出すカード。その時点の全系列の値を、サイトの並び順に並べる
-function TooltipCard({ active, payload, label, sites, colors, metric }: TooltipContentProps & ChartProps) {
+// ホバーで出すカード。その時点の全系列の値を、サイトの並び順に並べ、最後に合計
+function TooltipCard({ active, payload, label, sites, colors, metric, showTotal }: TooltipContentProps & ChartProps) {
   if (!active || !payload?.length) return null;
+  const value = (key: string) => formatNumber(Number(payload.find((p) => p.dataKey === key)?.value ?? 0));
   return (
     <div className="min-w-44 rounded-xl border bg-surface px-3 py-2.5 text-xs leading-normal shadow-pop">
       <div className="mb-2 font-medium text-ink">
         {minuteLabel(Number(label))}の{METRIC_LABELS[metric]}
       </div>
       <ul className="space-y-1">
-        {sites.map((site) => {
-          const entry = payload.find((p) => p.dataKey === `s${site.site_id}`);
-          return (
-            <li key={site.site_id} className="flex items-center gap-2">
-              <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: colors.get(site.site_id) }} />
-              <span className="text-ink-2">{site.name}</span>
-              <span className="ml-auto pl-4 font-medium text-ink tabular-nums">{formatNumber(Number(entry?.value ?? 0))}</span>
-            </li>
-          );
-        })}
+        {sites.map((site) => (
+          <li key={site.site_id} className="flex items-center gap-2">
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: colors.get(site.site_id) }} />
+            <span className="text-ink-2">{site.name}</span>
+            <span className="ml-auto pl-4 font-medium text-ink tabular-nums">{value(`s${site.site_id}`)}</span>
+          </li>
+        ))}
+        {showTotal && (
+          <li className="mt-1 flex items-center gap-2 border-t pt-1.5">
+            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: TOTAL_COLOR }} />
+            <span className="font-medium text-ink">合計</span>
+            <span className="ml-auto pl-4 font-medium text-ink tabular-nums">{value(TOTAL_KEY)}</span>
+          </li>
+        )}
       </ul>
     </div>
   );
 }
 
+// 各値に丸い点を出し、どこで折れているかを見えるようにする。周りの白い縁で、重なっても区切りがわかる
+function dotStyle(color: string | undefined) {
+  return { r: 3, fill: color, stroke: "var(--surface)", strokeWidth: 1.5 };
+}
+
 // 分ごとの推移（docs/01_design/screen_design.md §3、design_guideline.md §5）。
-// 補助線は横だけ、縦軸は右、普段は点を出さず、ホバーで縦線と全系列の値のカード
-export function MinuteChart({ sites, colors, metric }: ChartProps) {
+// 補助線は横だけ、縦軸は右、各値に点、ホバーで縦線と全系列の値のカード
+export function MinuteChart({ sites, colors, metric, showTotal }: ChartProps) {
+  // 29分前から今まで30点。合計は、選んだサイトを足した値
   const rows = Array.from({ length: 30 }, (_, i) => {
     const minutesAgo = 29 - i;
-    const row: Record<string, number> = { minutes_ago: minutesAgo };
+    const point: Record<string, number> = { minutes_ago: minutesAgo, [TOTAL_KEY]: 0 };
     for (const site of sites) {
-      row[`s${site.site_id}`] = site.per_minute.find((m) => m.minutes_ago === minutesAgo)?.[metric] ?? 0;
+      const value = site.per_minute.find((m) => m.minutes_ago === minutesAgo)?.[metric] ?? 0;
+      point[`s${site.site_id}`] = value;
+      point[TOTAL_KEY] += value;
     }
-    return row;
+    return point;
   });
+
+  const line = (key: string, name: string, color: string | undefined) => (
+    <Line
+      key={key}
+      dataKey={key}
+      name={name}
+      type="linear"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dot={dotStyle(color)}
+      activeDot={{ r: 5, fill: color, stroke: "var(--surface)", strokeWidth: 2 }}
+      isAnimationActive={false}
+    />
+  );
 
   return (
     <div className="h-72 w-full [&_.recharts-cartesian-axis-tick_text]:tabular-nums">
@@ -81,25 +111,14 @@ export function MinuteChart({ sites, colors, metric }: ChartProps) {
             tick={{ fill: "var(--ink-3)", fontSize: 12 }}
           />
           <Tooltip
-            content={(props) => <TooltipCard {...props} sites={sites} colors={colors} metric={metric} />}
+            content={(props) => (
+              <TooltipCard {...props} sites={sites} colors={colors} metric={metric} showTotal={showTotal} />
+            )}
             cursor={{ stroke: "var(--ink-3)", strokeWidth: 1 }}
           />
-          {sites.map((site) => (
-            <Line
-              key={site.site_id}
-              dataKey={`s${site.site_id}`}
-              name={site.name}
-              type="linear"
-              stroke={colors.get(site.site_id)}
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              dot={false}
-              // ホバーした点は直径 8px、周りに面の色の 2px の輪
-              activeDot={{ r: 4, stroke: "var(--surface)", strokeWidth: 2 }}
-              isAnimationActive={false}
-            />
-          ))}
+          {sites.map((site) => line(`s${site.site_id}`, site.name, colors.get(site.site_id)))}
+          {/* 合計は最後に描いて、サイトの線の上に出す */}
+          {showTotal && line(TOTAL_KEY, "合計", TOTAL_COLOR)}
         </LineChart>
       </ResponsiveContainer>
     </div>

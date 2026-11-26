@@ -12,6 +12,8 @@ from collections.abc import Callable
 
 from glance.google.ga4 import (
     AccountSummary,
+    BreakdownDimension,
+    BreakdownRow,
     Ga4PermissionDenied,
     MinuteRow,
     PageRow,
@@ -166,5 +168,33 @@ class FakeGa4Client:
             remaining -= share
             title = rng.choice(_TITLE_FORMS).format(t=topic) + f" | {name}"
             rows.append(PageRow(title, share, max(1, round(share * rng.uniform(0.6, 0.9)))))
+        rows.sort(key=lambda r: r.page_views, reverse=True)
+        return rows[:limit]
+
+    async def realtime_breakdown(
+        self, property_id: str, dimension: BreakdownDimension, limit: int
+    ) -> list[BreakdownRow]:
+        await self._wait()
+        self._check_error(property_id)
+        total = sum(r.page_views for r in self._minutes(property_id))
+        rng = random.Random(f"{property_id}:{int(self._clock() // 60)}:{dimension}")
+        if dimension == "deviceCategory":
+            weights = {"mobile": rng.uniform(0.5, 0.75), "desktop": rng.uniform(0.2, 0.45), "tablet": rng.uniform(0.02, 0.07)}
+        else:
+            # 日本がほとんどで、Zaraz の判定のずれとボットで米国などが混ざる形にする
+            weights = {
+                "JP": rng.uniform(0.65, 0.85),
+                "US": rng.uniform(0.08, 0.2),
+                "CN": rng.uniform(0.0, 0.05),
+                "SG": rng.uniform(0.0, 0.03),
+                "KR": rng.uniform(0.0, 0.02),
+                "(not set)": rng.uniform(0.0, 0.01),
+            }
+        scale = sum(weights.values())
+        rows = []
+        for key, weight in weights.items():
+            page_views = round(total * weight / scale)
+            if page_views > 0:
+                rows.append(BreakdownRow(key, page_views, max(1, round(page_views * rng.uniform(0.6, 0.8)))))
         rows.sort(key=lambda r: r.page_views, reverse=True)
         return rows[:limit]

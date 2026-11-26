@@ -37,6 +37,19 @@ async def test_sites_in_order_with_filled_minutes(logged_in: AsyncClient) -> Non
     assert total["page_views"] == sum(s["last_30_min"]["page_views"] for s in body["sites"])
 
 
+async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
+    await add(logged_in, "900000001")
+    site = (await logged_in.get("/api/realtime")).json()["sites"][0]
+    devices = {d["key"] for d in site["devices"]}
+    assert devices <= {"mobile", "desktop", "tablet"} and "mobile" in devices
+    countries = site["countries"]
+    assert 0 < len(countries) <= 10
+    assert countries[0]["key"] == "JP"
+    assert [c["page_views"] for c in countries] == sorted((c["page_views"] for c in countries), reverse=True)
+    for row in site["devices"] + countries:
+        assert set(row) == {"key", "page_views", "active_users"}
+
+
 async def test_failed_site_is_excluded_from_total(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     await add(logged_in, ERROR_PROPERTY_ID)

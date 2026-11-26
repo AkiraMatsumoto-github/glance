@@ -1,8 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatNumber } from "@/lib/format";
-import type { RealtimeSite } from "@/lib/types";
-
-type OkSite = Extract<RealtimeSite, { status: "ok" }>;
+import type { OkSite } from "@/lib/types";
 
 const NUM = "text-right tabular-nums";
 const LIMIT = 20;

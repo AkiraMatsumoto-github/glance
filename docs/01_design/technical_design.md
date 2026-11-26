@@ -119,7 +119,7 @@ glance/
 
 ### 6.1 `GET /api/realtime`
 
-- サイトごとに、[data_sources.md](data_sources.md) §5 の3回の呼び出しを行う。全サイト・全呼び出しを並行して行う（非同期のクライアント）。
+- サイトごとに、[data_sources.md](data_sources.md) §5 の5回の呼び出しを行う。全サイト・全呼び出しを並行して行う（非同期のクライアント）。
 - 1サイトの待ち時間の上限は10秒。超えたサイト、失敗したサイトは `status: "error"` にし、ほかのサイトの結果は返す。
 - `minutesAgo` は値のない分を 0 で埋め、30分前から今までの30個にそろえる。
 - 直近5分の値は、1回目の呼び出しの2つめの期間から取る（分ごとの値は足さない。[data_sources.md](data_sources.md) §5）。
@@ -143,7 +143,9 @@ glance/
         {"minutes_ago": 29, "page_views": 3, "active_users": 2},
         {"minutes_ago": 28, "page_views": 5, "active_users": 4}
       ],
-      "top_pages": [{"title": "記事のタイトル", "page_views": 12, "active_users": 8}]
+      "top_pages": [{"title": "記事のタイトル", "page_views": 12, "active_users": 8}],
+      "devices": [{"key": "mobile", "page_views": 80, "active_users": 30}],
+      "countries": [{"key": "JP", "page_views": 98, "active_users": 37}]
     },
     {"site_id": 2, "name": "TechShift", "status": "error", "error": "timeout"}
   ],

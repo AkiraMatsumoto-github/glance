@@ -10,13 +10,14 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from glance.google.ga4 import Ga4Client, Ga4PermissionDenied, Ga4QuotaExceeded, ReauthRequired, Totals
+from glance.google.ga4 import BreakdownRow, Ga4Client, Ga4PermissionDenied, Ga4QuotaExceeded, ReauthRequired, Totals
 
 log = logging.getLogger(__name__)
 
 JST = ZoneInfo("Asia/Tokyo")
 MINUTES = 30
 TOP_PAGES = 20
+TOP_COUNTRIES = 10  # 画面では、選んだサイトで多い国を3つ出し、残りは「その他」にまとめる
 SITE_TIMEOUT_SECONDS = 10.0
 
 
@@ -31,14 +32,21 @@ def _totals(t: Totals) -> dict[str, int]:
     return {"page_views": t.page_views, "active_users": t.active_users, "key_events": t.key_events}
 
 
+def _breakdown(rows: list[BreakdownRow]) -> list[dict[str, Any]]:
+    return [{"key": r.key, "page_views": r.page_views, "active_users": r.active_users} for r in rows]
+
+
 async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> dict[str, Any]:
     base = {"site_id": target.site_id, "name": target.name}
     try:
         async with asyncio.timeout(timeout):
-            (last_30, last_5), minutes, pages = await asyncio.gather(
+            (last_30, last_5), minutes, pages, devices, countries = await asyncio.gather(
                 client.realtime_totals(target.property_id),
                 client.realtime_per_minute(target.property_id),
                 client.realtime_top_pages(target.property_id, TOP_PAGES),
+                # デバイスは mobile・desktop・tablet ほどしかないので、上限は余裕をもって取る
+                client.realtime_breakdown(target.property_id, "deviceCategory", 10),
+                client.realtime_breakdown(target.property_id, "countryId", TOP_COUNTRIES),
             )
     except ReauthRequired:
         raise
@@ -73,6 +81,8 @@ async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> 
         "top_pages": [
             {"title": p.title, "page_views": p.page_views, "active_users": p.active_users} for p in pages[:TOP_PAGES]
         ],
+        "devices": _breakdown(devices),
+        "countries": _breakdown(countries[:TOP_COUNTRIES]),
     }
 
 
