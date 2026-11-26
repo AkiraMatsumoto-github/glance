@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { LoadingIndicator } from "@/components/loading-indicator";
 import { Notice } from "@/components/notice";
 import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
 import { EventBars } from "@/components/realtime/event-bars";
@@ -15,11 +16,13 @@ import { Button } from "@/components/ui/button";
 import { api, errorMessage } from "@/lib/api";
 import { formatTime, siteColor } from "@/lib/format";
 import type { Metric, OkSite, Realtime } from "@/lib/types";
-import { cn } from "@/lib/utils";
+
+// 最後に取った結果。ほかの画面から戻ったときに、取り直すまでの間これを出す（ブラウザのメモリだけ。読み込み直すと消える）
+let lastResult: Realtime | null = null;
 
 // リアルタイム（docs/01_design/screen_design.md §3）。開いたときと「更新」を押したときだけ取る
 export default function RealtimePage() {
-  const [data, setData] = useState<Realtime | null>(null);
+  const [data, setData] = useState<Realtime | null>(() => lastResult);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [metric, setMetric] = useState<Metric>("page_views");
@@ -33,6 +36,7 @@ export default function RealtimePage() {
       api<Realtime>("/api/realtime")
         .then(
           (result) => {
+            lastResult = result;
             setData(result);
             setError(null);
           },
@@ -83,7 +87,8 @@ export default function RealtimePage() {
 
       {error && <Notice>{error}</Notice>}
 
-      {data === null && loading && <LoadingBlocks />}
+      {/* 取っている間は、前の数字はそのまま出し、画面の真ん中に印を出すだけにする */}
+      {loading && <LoadingIndicator />}
 
       {data !== null && data.sites.length === 0 && (
         <div className="rounded-xl border bg-surface px-6 py-10 text-center">
@@ -95,7 +100,7 @@ export default function RealtimePage() {
       )}
 
       {data !== null && data.sites.length > 0 && (
-        <div className={cn("space-y-5 transition-opacity", loading && "opacity-50")}>
+        <div className="space-y-5">
           {allFailed && <Notice>取得できませんでした。時間をおいて更新してください。</Notice>}
 
           <SiteCards
@@ -156,14 +161,4 @@ export default function RealtimePage() {
 
 function SelectPrompt() {
   return <p className="px-4 py-10 text-center text-ink-3">サイトを選んでください。</p>;
-}
-
-function LoadingBlocks() {
-  return (
-    <div className="space-y-5" aria-busy="true" aria-label="読み込み中">
-      {[40, 72, 64].map((h) => (
-        <div key={h} className="animate-pulse rounded-xl border bg-surface" style={{ height: `${h * 4}px` }} />
-      ))}
-    </div>
-  );
 }
