@@ -16,7 +16,7 @@ export function TopPages({ sites, colors }: { sites: OkSite[]; colors: Map<numbe
     .slice(0, LIMIT);
 
   if (rows.length === 0) {
-    return <p className="px-4 py-6 text-sm text-muted-foreground">直近30分に読まれた記事はありません。</p>;
+    return <p className="px-4 py-6 text-ink-3">直近30分に読まれた記事はありません。</p>;
   }
   return (
     // スマホではタイトルが潰れないよう、表を横にスクロールさせる
@@ -33,7 +33,7 @@ export function TopPages({ sites, colors }: { sites: OkSite[]; colors: Map<numbe
       <TableBody>
         {rows.map((row, i) => (
           <TableRow key={`${row.site.site_id}-${row.title}`}>
-            <TableCell className="pl-4 text-muted-foreground tabular-nums">{i + 1}</TableCell>
+            <TableCell className="pl-4 text-ink-3 tabular-nums">{i + 1}</TableCell>
             {/* タイトルは文字として出す。長いものは省略し、ホバーで全文 */}
             <TableCell className="truncate" title={row.title}>
               {row.title}

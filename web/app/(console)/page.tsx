@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Notice } from "@/components/notice";
 import { MinuteChart } from "@/components/realtime/minute-chart";
 import { RealtimeNotes } from "@/components/realtime/notes";
 import { SiteFilter } from "@/components/realtime/site-filter";
@@ -70,7 +71,7 @@ export default function RealtimePage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">リアルタイム（直近30分）</h1>
-        <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">
+        <div className="ml-auto flex items-center gap-3 text-ink-3">
           {data && <span>{formatTime(data.fetched_at)} に取得</span>}
           <Button onClick={refresh} disabled={loading}>
             {loading ? "取得中…" : "更新"}
@@ -80,18 +81,14 @@ export default function RealtimePage() {
 
       <RealtimeNotes />
 
-      {error && (
-        <p role="alert" className="rounded-lg border border-destructive/30 bg-background px-4 py-3 text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      {error && <Notice>{error}</Notice>}
 
       {data === null && loading && <LoadingBlocks />}
 
       {data !== null && data.sites.length === 0 && (
-        <div className="rounded-xl border bg-background px-6 py-10 text-center text-sm">
+        <div className="rounded-xl border bg-surface px-6 py-10 text-center">
           <p>サイト設定から GA4 のプロパティを追加してください。</p>
-          <Link href="/settings/sites" className="mt-3 inline-block text-primary underline underline-offset-4">
+          <Link href="/settings/sites" className="mt-3 inline-block font-medium underline underline-offset-4">
             サイト設定へ
           </Link>
         </div>
@@ -99,11 +96,7 @@ export default function RealtimePage() {
 
       {data !== null && data.sites.length > 0 && (
         <div className={cn("space-y-5 transition-opacity", loading && "opacity-50")}>
-          {allFailed && (
-            <p role="alert" className="text-sm text-destructive">
-              取得できませんでした。時間をおいて更新してください。
-            </p>
-          )}
+          {allFailed && <Notice>取得できませんでした。時間をおいて更新してください。</Notice>}
 
           <SiteTable data={data} colors={colors} />
 
@@ -114,9 +107,9 @@ export default function RealtimePage() {
             onToggle={toggle}
           />
 
-          <section className="rounded-xl border bg-background">
+          <section className="rounded-xl border bg-surface">
             <div className="flex items-center gap-3 border-b px-4 py-3">
-              <h2 className="font-medium">分ごとの推移</h2>
+              <h2 className="text-base font-medium">分ごとの推移</h2>
               <div className="flex rounded-lg border p-0.5" role="group" aria-label="指標">
                 {(["page_views", "active_users"] as const).map((m) => (
                   <button
@@ -125,8 +118,8 @@ export default function RealtimePage() {
                     aria-pressed={metric === m}
                     onClick={() => setMetric(m)}
                     className={cn(
-                      "rounded-md px-3 py-1 text-sm",
-                      metric === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
+                      "rounded-md px-3 py-0.5 text-sm",
+                      metric === m ? "bg-ink text-white" : "text-ink-2 hover:bg-hover",
                     )}
                   >
                     {m === "page_views" ? "PV" : "UU"}
@@ -143,8 +136,8 @@ export default function RealtimePage() {
             </div>
           </section>
 
-          <section className="rounded-xl border bg-background">
-            <h2 className="border-b px-4 py-3 font-medium">いま読まれている記事（選んだサイトの PV の上位20）</h2>
+          <section className="rounded-xl border bg-surface">
+            <h2 className="border-b px-4 py-3 text-base font-medium">いま読まれている記事（選んだサイトの PV の上位20）</h2>
             {selected.length > 0 ? <TopPages sites={selected} colors={colors} /> : <SelectPrompt />}
           </section>
         </div>
@@ -154,14 +147,14 @@ export default function RealtimePage() {
 }
 
 function SelectPrompt() {
-  return <p className="px-4 py-10 text-center text-sm text-muted-foreground">サイトを選んでください。</p>;
+  return <p className="px-4 py-10 text-center text-ink-3">サイトを選んでください。</p>;
 }
 
 function LoadingBlocks() {
   return (
     <div className="space-y-5" aria-busy="true" aria-label="読み込み中">
       {[40, 72, 64].map((h) => (
-        <div key={h} className="animate-pulse rounded-xl border bg-background" style={{ height: `${h * 4}px` }} />
+        <div key={h} className="animate-pulse rounded-xl border bg-surface" style={{ height: `${h * 4}px` }} />
       ))}
     </div>
   );

@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
+import { Notice } from "@/components/notice";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -17,11 +18,7 @@ const MESSAGES: Record<string, string> = {
 function LoginMessage() {
   const error = useSearchParams().get("error");
   if (!error) return null;
-  return (
-    <p role="alert" className="text-sm text-destructive">
-      {MESSAGES[error] ?? MESSAGES.failed}
-    </p>
-  );
+  return <Notice className="w-full text-left">{MESSAGES[error] ?? MESSAGES.failed}</Notice>;
 }
 
 export default function LoginPage() {

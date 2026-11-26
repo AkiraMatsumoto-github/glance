@@ -164,7 +164,7 @@ UTM・参照元・キャンペーン名・検索クエリ・ページパスな�
 | [infrastructure_design.md](infrastructure_design.md) | インフラ構成（ホスティング、ドメイン、ログイン、秘密の置き場所、バックアップ） | 初版 |
 | [technical_design.md](technical_design.md) | 技術構成（ライブラリ、リポジトリの構成、ログインの手順、API、VPS での動かし方、反映の手順） | 初版（1番目の段階の分） |
 | [screen_design.md](screen_design.md) | 画面設計（画面ごとの配置、状態ごとの出し方、グラフの見た目） | 初版（1番目の段階の分） |
-| design_guideline.md | デザインガイドライン（画面の見た目、グラフの描き方） | 未作成 |
+| [design_guideline.md](design_guideline.md) | デザインガイドライン（色、文字、余白、部品、グラフの描き方、書き方） | 初版 |
 
 ## 8. 未決事項
 

@@ -16,15 +16,15 @@ export function SiteFilter({
   onToggle: (siteId: number, checked: boolean) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-      <span className="text-muted-foreground">出すサイト</span>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <span className="text-ink-3">出すサイト</span>
       {sites.map((site) => {
         const color = colors.get(site.site_id);
         const disabled = site.status !== "ok";
         return (
           <label
             key={site.site_id}
-            className={disabled ? "flex items-center gap-2 text-muted-foreground" : "flex cursor-pointer items-center gap-2"}
+            className={disabled ? "flex items-center gap-2 text-ink-3" : "flex cursor-pointer items-center gap-2"}
             title={disabled ? "取得できなかったサイトは選べません" : undefined}
           >
             <Checkbox

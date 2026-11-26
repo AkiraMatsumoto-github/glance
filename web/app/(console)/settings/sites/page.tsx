@@ -3,6 +3,7 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,17 +61,13 @@ export default function SitesPage() {
         </Button>
       </div>
 
-      {error && (
-        <p role="alert" className="rounded-lg border border-destructive/30 bg-background px-4 py-3 text-sm text-destructive">
-          {error}
-        </p>
-      )}
+      {error && <Notice>{error}</Notice>}
 
-      <div className="rounded-xl border bg-background">
+      <div className="rounded-xl border bg-surface">
         {sites === null ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">読み込み中…</p>
+          <p className="px-4 py-10 text-center text-ink-3">読み込み中…</p>
         ) : sites.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+          <p className="px-4 py-10 text-center text-ink-3">
             まだサイトがありません。「サイトを追加」から GA4 のプロパティを選んでください。
           </p>
         ) : (
@@ -246,26 +243,22 @@ function AddSiteDialog({
           <DialogTitle>サイトを追加</DialogTitle>
           <DialogDescription>ログインしたアカウントが見られる GA4 のプロパティから選びます。</DialogDescription>
         </DialogHeader>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error && <Notice>{error}</Notice>}
         <div className="max-h-96 space-y-4 overflow-y-auto">
-          {accounts === null && !error && <p className="text-sm text-muted-foreground">読み込み中…</p>}
-          {accounts?.length === 0 && <p className="text-sm text-muted-foreground">見られるプロパティがありません。</p>}
+          {accounts === null && !error && <p className="text-ink-3">読み込み中…</p>}
+          {accounts?.length === 0 && <p className="text-ink-3">見られるプロパティがありません。</p>}
           {accounts?.map((account) => (
             <div key={account.account_id}>
-              <div className="mb-1.5 text-xs font-medium text-muted-foreground">{account.name}</div>
+              <div className="mb-1.5 text-xs font-medium text-ink-3">{account.name}</div>
               <ul className="divide-y rounded-lg border">
                 {account.properties.map((p) => (
                   <li key={p.property_id} className="flex items-center gap-3 px-3 py-2 text-sm">
                     <span className="min-w-0 flex-1 truncate" title={p.name}>
                       {p.name}
                     </span>
-                    <span className="text-xs text-muted-foreground tabular-nums">{p.property_id}</span>
+                    <span className="text-xs text-ink-3 tabular-nums">{p.property_id}</span>
                     {p.added ? (
-                      <span className="w-14 text-right text-xs text-muted-foreground">追加済み</span>
+                      <span className="w-14 text-right text-xs text-ink-3">追加済み</span>
                     ) : (
                       <Button size="sm" className="w-14" disabled={busy} onClick={() => add(p.property_id)}>
                         追加

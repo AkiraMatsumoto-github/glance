@@ -29,8 +29,8 @@ export function AppHeader() {
   }
 
   return (
-    <header className="border-b bg-background">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6">
+    <header className="border-b bg-surface">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Glance
         </Link>
@@ -40,8 +40,8 @@ export function AppHeader() {
               key={item.href}
               href={item.href}
               className={cn(
-                "rounded-md px-2 py-1.5 whitespace-nowrap text-muted-foreground hover:bg-muted hover:text-foreground sm:px-3",
-                pathname === item.href && "bg-muted font-medium text-foreground",
+                "rounded-md px-2 py-1.5 whitespace-nowrap text-ink-2 hover:bg-hover hover:text-ink sm:px-3",
+                pathname === item.href && "bg-hover font-medium text-ink",
               )}
             >
               {item.label}
@@ -49,7 +49,7 @@ export function AppHeader() {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-3 text-sm">
-          {me && <span className="hidden text-muted-foreground sm:inline">{me.email}</span>}
+          {me && <span className="hidden text-ink-3 sm:inline">{me.email}</span>}
           <Button variant="ghost" size="sm" onClick={logout}>
             ログアウト
           </Button>

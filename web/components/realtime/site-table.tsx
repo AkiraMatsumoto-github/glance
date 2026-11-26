@@ -1,3 +1,5 @@
+import { CircleAlert } from "lucide-react";
+
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatNumber } from "@/lib/format";
 import type { Realtime, RealtimeErrorKind } from "@/lib/types";
@@ -16,7 +18,7 @@ export function SiteTable({ data, colors }: { data: Realtime; colors: Map<number
   const failed = data.sites.filter((s) => s.status === "error").length;
   const { last_30_min: t30, last_5_min: t5 } = data.total;
   return (
-    <div className="rounded-xl border bg-background">
+    <div className="rounded-xl border bg-surface">
       <Table>
         <TableHeader>
           <TableRow>
@@ -46,8 +48,11 @@ export function SiteTable({ data, colors }: { data: Realtime; colors: Map<number
                   <TableCell className={`${NUM} pr-4`}>{formatNumber(site.last_30_min.key_events)}</TableCell>
                 </>
               ) : (
-                <TableCell colSpan={5} className="pr-4 text-muted-foreground">
-                  取得できませんでした（{ERROR_LABELS[site.error]}）
+                <TableCell colSpan={5} className="pr-4 text-ink-2">
+                  <span className="flex items-center gap-1.5">
+                    <CircleAlert className="size-3.5 shrink-0 text-error" aria-hidden />
+                    取得できませんでした（{ERROR_LABELS[site.error]}）
+                  </span>
                 </TableCell>
               )}
             </TableRow>
@@ -57,7 +62,7 @@ export function SiteTable({ data, colors }: { data: Realtime; colors: Map<number
           <TableRow>
             <TableCell className="pl-4 font-medium">
               合計
-              {failed > 0 && <span className="ml-1 font-normal text-muted-foreground">（{failed}サイトを除く）</span>}
+              {failed > 0 && <span className="ml-1 font-normal text-ink-3">（{failed}サイトを除く）</span>}
             </TableCell>
             <TableCell className={NUM}>{formatNumber(t30.page_views)}</TableCell>
             <TableCell className={NUM}>{formatNumber(t5.page_views)}</TableCell>

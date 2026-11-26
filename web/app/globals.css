@@ -2,27 +2,15 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* 色・文字の値は docs/01_design/design_guideline.md に合わせる。部品の中に色の値を直接書かない */
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -39,6 +27,22 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-hover: var(--hover);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-error: var(--error);
+  --color-error-bg: var(--error-bg);
+  --color-error-border: var(--error-border);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning-border);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-border: var(--success-border);
+  --shadow-pop: var(--shadow-pop);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,87 +53,82 @@
 }
 
 :root {
-  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
-  /* 画面の地の色。カードは白で、地を少しだけ灰色にする */
-  --page: oklch(0.975 0.003 250);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  /* サイトの色（並び順に割り当てる。docs/01_design/screen_design.md §5） */
-  --chart-1: #1a73e8;
-  --chart-2: #12b5cb;
-  --chart-3: #e52592;
-  --chart-4: #f9ab00;
-  --chart-5: #9334e6;
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
+  /* 文字（§3）。IBM Plex Sans JP は layout.tsx の next/font が --font-plex に入れる */
+  --font-sans: var(--font-plex), "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* 画面の色（§2.1） */
+  --page: #f5f6f8;
+  --surface: #ffffff;
+  --border: #e2e5e9;
+  --grid: #eceef1;
+  --axis: #cdd2d8;
+  --hover: #f0f2f5;
+  --ink: #1c2330;
+  --ink-2: #4a5462;
+  --ink-3: #646d79;
+
+  /* サイトの色（§2.2）。並び順に割り当て、9サイト目からは灰色の「その他」 */
+  --series-1: #2552aa;
+  --series-2: #c28412;
+  --series-3: #14938d;
+  --series-4: #a67ad6;
+  --series-5: #922d55;
+  --series-6: #d97230;
+  --series-7: #046a2f;
+  --series-8: #8285eb;
+  --series-other: #8a929c;
+
+  /* 状態の色（§2.3）。必ずアイコンと文と一緒に使う */
+  --error: #b42318;
+  --error-bg: #fef3f2;
+  --error-border: #fecdca;
+  --warning: #a15c07;
+  --warning-bg: #fffaeb;
+  --warning-border: #fedf89;
+  --success: #067647;
+  --success-bg: #ecfdf3;
+  --success-border: #abefc6;
+
+  /* 影はホバーのカードとダイアログだけ（§4） */
+  --shadow-pop: 0 4px 16px rgb(28 35 48 / 0.1);
+
+  /* shadcn/ui の部品が使う名前を、上の色に当てる */
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--hover);
+  --secondary-foreground: var(--ink);
+  --muted: var(--hover);
+  --muted-foreground: var(--ink-3);
+  --accent: var(--hover);
+  --accent-foreground: var(--ink);
+  --destructive: var(--error);
+  --input: #d5d9df;
+  --ring: var(--ink);
+  --radius: 0.375rem;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply text-foreground;
-    background-color: var(--page);
-  }
   html {
     @apply font-sans;
+  }
+  body {
+    color: var(--ink);
+    background-color: var(--page);
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  h1,
+  h2,
+  h3 {
+    line-height: 1.4;
   }
 }

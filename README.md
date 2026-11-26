@@ -45,3 +45,4 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 | [docs/01_design/infrastructure_design.md](docs/01_design/infrastructure_design.md) | インフラ（ホスティング、ドメイン、ログイン、秘密の置き場所、バックアップ） |
 | [docs/01_design/technical_design.md](docs/01_design/technical_design.md) | 技術構成（ライブラリ、ログインの手順、API、反映の手順） |
 | [docs/01_design/screen_design.md](docs/01_design/screen_design.md) | 画面設計 |
+| [docs/01_design/design_guideline.md](docs/01_design/design_guideline.md) | デザインガイドライン（色、文字、グラフの描き方） |
