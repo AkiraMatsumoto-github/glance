@@ -8,7 +8,7 @@ import { Notice } from "@/components/notice";
 import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
 import { EventBars } from "@/components/realtime/event-bars";
 import { MinuteChart } from "@/components/realtime/minute-chart";
-import { SeriesLegend } from "@/components/realtime/series-legend";
+import { SeriesLegend } from "@/components/series-legend";
 import { SiteCards } from "@/components/realtime/site-cards";
 import { TopPages } from "@/components/realtime/top-pages";
 import { Segmented } from "@/components/segmented";

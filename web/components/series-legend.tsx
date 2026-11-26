@@ -1,15 +1,17 @@
-import type { OkSite } from "@/lib/types";
+import type { ReactNode } from "react";
 
 // グラフの凡例（design_guideline.md §5）。題のすぐ下に、選んでいるサイトの色の丸と名前を並べる。
-// 選ぶのは数字のカードのチェックボックスで、凡例は見るだけ
+// 選ぶのは数字のカードのチェックボックスで、凡例は見るだけ。children には、破線の見方などを続けて並べる
 export function SeriesLegend({
   sites,
   colors,
   showTotal = false,
+  children,
 }: {
-  sites: OkSite[];
+  sites: { site_id: number; name: string }[];
   colors: Map<number, string>;
   showTotal?: boolean;
+  children?: ReactNode;
 }) {
   return (
     <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
@@ -25,6 +27,7 @@ export function SeriesLegend({
           合計
         </li>
       )}
+      {children}
     </ul>
   );
 }

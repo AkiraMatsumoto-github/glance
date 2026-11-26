@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { SeriesLegend } from "@/components/realtime/series-legend";
+import { SeriesLegend } from "@/components/series-legend";
 import { formatNumber } from "@/lib/format";
 import type { OkSite } from "@/lib/types";
 

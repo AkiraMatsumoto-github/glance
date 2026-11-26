@@ -3,7 +3,7 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { TooltipContentProps } from "recharts";
 
-import { formatAxis, formatNumber } from "@/lib/format";
+import { formatCompact, formatNumber } from "@/lib/format";
 import type { Metric, OkSite } from "@/lib/types";
 
 const METRIC_LABELS: Record<Metric, string> = { page_views: "PV", active_users: "UU" };
@@ -107,7 +107,7 @@ export function MinuteChart({ sites, colors, metric, showTotal }: ChartProps) {
             axisLine={false}
             tickLine={false}
             width={44}
-            tickFormatter={formatAxis}
+            tickFormatter={formatCompact}
             tick={{ fill: "var(--ink-3)", fontSize: 12 }}
           />
           <Tooltip

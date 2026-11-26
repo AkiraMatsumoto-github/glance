@@ -14,8 +14,28 @@ const NAV = [
   { href: "/settings/sites", label: "サイト設定" },
 ];
 
-export function AppHeader() {
+// ヘッダーのメニュー。いま開いている画面を灰色の面にする。デモのヘッダーでも使う
+export function HeaderNav({ items }: { items: { href: string; label: string }[] }) {
   const pathname = usePathname();
+  return (
+    <nav className="flex items-center gap-1 text-sm">
+      {items.map((item) => (
+        <Link
+          key={item.href}
+          href={item.href}
+          className={cn(
+            "rounded-md px-2 py-1.5 whitespace-nowrap text-ink-2 hover:bg-hover hover:text-ink sm:px-3",
+            pathname === item.href && "bg-hover font-medium text-ink",
+          )}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+export function AppHeader() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
 
@@ -35,20 +55,7 @@ export function AppHeader() {
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Glance
         </Link>
-        <nav className="flex items-center gap-1 text-sm">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "rounded-md px-2 py-1.5 whitespace-nowrap text-ink-2 hover:bg-hover hover:text-ink sm:px-3",
-                pathname === item.href && "bg-hover font-medium text-ink",
-              )}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <HeaderNav items={NAV} />
         <div className="ml-auto flex items-center gap-3 text-sm">
           {me && <span className="hidden text-ink-3 sm:inline">{me.email}</span>}
           <Button variant="ghost" size="sm" onClick={logout}>

@@ -117,6 +117,7 @@ glance/
 | `DELETE /api/sites/{id}` | サイトを消す（接続設定も消す） |
 | `GET /api/realtime` | 全サイトのリアルタイムを取る（§6.1） |
 | `GET /api/demo/realtime` | デモ用のダミーの数字（§6.2）。ログイン不要 |
+| `GET /api/demo/seo` | SEO の画面のデモ用のダミーの数字（§6.3）。ログイン不要 |
 
 ### 6.1 `GET /api/realtime`
 
@@ -162,9 +163,58 @@ glance/
 - DB・Google・利用者のデータには触れない（テストで確かめる）。だれが呼んでもダミーしか返らない。
 - API にした理由（2026-11-26）: 項目を足すときはテストと手元の確認のためにフェイクも必ず直すので、デモがそのまま付いてくる。固定の JSON を画面に置く形だと、項目を足すたびに作り直しが要る。
 
+### 6.3 `GET /api/demo/seo`
+
+- ログイン不要。デモの SEO の画面（[screen_design.md](screen_design.md) §6・§7）が使う。2番目の段階で作る本物の `GET /api/seo` と、引数・応答の形を同じにする（画面は取り元だけを変えて同じ部品を使う）。
+- 数字は `glance/seo/demo.py` が、サイト・日付・期間から決まる形で作る（同じ条件なら同じ数字）。DB・Google・Bing・利用者のデータには触れない（テストで確かめる）。サイトは「デモサイト A〜E」。
+- 期間と比べる期間の解釈は `glance/seo/periods.py`（[api_design.md](api_design.md) §1 と同じ。本物でも使う）。
+
+引数:
+
+| 名前 | 値 | 既定 |
+|---|---|---|
+| `engine` | `google` / `bing` | `google` |
+| `period` | `last_7_days` / `last_28_days` / `this_month` / `last_month` / `custom` | `last_28_days` |
+| `compare` | `previous_period` / `previous_year` / `none` | `previous_period` |
+| `start`・`end` | `custom` のときの期間（`2026-11-01` の形）。終わりは、データがある最終日までに縮める | なし |
+
+- 期間がおかしいとき（`custom` で始まり・終わりがない、始まりが終わりより後、始まりがデータのある最終日より後）は 400（`invalid_period`。`message` は画面にそのまま出せる文）。
+- データがある最終日（`data_until`）: デモでは GSC は今日の3日前、Bing は前日（本物は取得ログから出す）。
+
+応答の形（数字は例。配列は途中を省いた）:
+
+```json
+{
+  "engine": "google",
+  "period": {"name": "last_28_days", "label": "直近28日", "start": "2026-10-27", "end": "2026-11-23"},
+  "compare": {"name": "previous_period", "start": "2026-09-29", "end": "2026-10-26"},
+  "data_until": "2026-11-23",
+  "sites": [
+    {
+      "site_id": 1,
+      "name": "デモサイト A",
+      "status": "ok",
+      "totals": {"clicks": 9846, "impressions": 385000, "position": 11.8},
+      "compare_totals": {"clicks": 9758, "impressions": 381000, "position": 11.9},
+      "daily": [{"date": "2026-10-27", "clicks": 390, "impressions": 14800, "position": 11.6}],
+      "compare_daily": [{"date": "2026-09-29", "clicks": 330, "impressions": 13900, "position": 12.0}],
+      "queries": [{"query": "RFID 課題", "clicks": 820, "impressions": 6022, "position": 1.5, "compare_clicks": 870}],
+      "pages": [{"title": "記事のタイトル", "path": "/news/load-factor-trend", "clicks": 1947, "impressions": 13947, "position": 1.5, "compare_clicks": 944}],
+      "crawl": null
+    }
+  ]
+}
+```
+
+- 比べないとき（`compare=none`）は、`compare`・`compare_totals`・`compare_daily` が `null`、`compare_clicks` も `null`。
+- `position` は表示回数の重みつき平均（[database_design.md](database_design.md) §6）。CTR は返さない（画面で「クリック ÷ 表示回数」を出す）。
+- 合計は返さない。画面で、選んだサイトを足して出す（リアルタイムと同じ）。
+- `queries`・`pages` は、サイトごとにクリックの多い順で100件まで。`compare_clicks` は、比べる期間のクリック。比べる期間の100件に入っていないものは `null`。
+- Bing のとき: 日ごとの `position` は `null`（`totals` の `position` も `null`）。`queries` は空（今は取らない。[data_sources.md](data_sources.md) §4）。`crawl` に日ごとの `{"date", "crawled", "indexed", "errors"}` を入れる（`indexed` はその日の在庫なので足さない）。Google のときの `crawl` は `null`。
+
 ## 7. 画面（Next.js）
 
-- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモ。ログイン不要）の4つ。中身は [screen_design.md](screen_design.md)。
+- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモのリアルタイム）・`/demo/seo`（デモの SEO）の5つ。デモの2つはログイン不要。中身は [screen_design.md](screen_design.md)。
 - データは、画面から `/api` を呼んで取る（ブラウザ側）。401 が返ったら `/login` へ移す（`reauth_required` のときは、理由を出してから移す）。
 - 画面に出す文字は、すべて React が描く（エスケープされる）。`dangerouslySetInnerHTML` は使わない（[overview.md](overview.md) §5）。
 

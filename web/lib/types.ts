@@ -44,3 +44,38 @@ export type Realtime = {
 };
 
 export type Metric = "page_views" | "active_users";
+
+// SEO（docs/01_design/technical_design.md §6.3）。Google と Bing で同じ形。Bing は掲載順位が null、クエリが空
+export type SeoEngine = "google" | "bing";
+export type SeoPeriodName = "last_7_days" | "last_28_days" | "this_month" | "last_month" | "custom";
+export type SeoCompareName = "previous_period" | "previous_year" | "none";
+
+export type SeoTotals = { clicks: number; impressions: number; position: number | null };
+export type SeoDay = SeoTotals & { date: string };
+// compare_clicks は、比べる期間のクリック。比べないとき・比べる期間の上位に入っていないときは null
+type SeoItem = { clicks: number; impressions: number; position: number; compare_clicks: number | null };
+export type SeoQuery = SeoItem & { query: string };
+export type SeoPage = SeoItem & { title: string; path: string };
+// indexed はその日のインデックス数（在庫なので足さない）
+export type CrawlDay = { date: string; crawled: number; indexed: number; errors: number };
+
+export type SeoSite = {
+  site_id: number;
+  name: string;
+  status: "ok";
+  totals: SeoTotals;
+  compare_totals: SeoTotals | null;
+  daily: SeoDay[];
+  compare_daily: SeoDay[] | null;
+  queries: SeoQuery[];
+  pages: SeoPage[];
+  crawl: CrawlDay[] | null;
+};
+
+export type Seo = {
+  engine: SeoEngine;
+  period: { name: SeoPeriodName; label: string; start: string; end: string };
+  compare: { name: SeoCompareName; start: string; end: string } | null;
+  data_until: string;
+  sites: SeoSite[];
+};

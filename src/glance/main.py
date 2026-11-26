@@ -19,6 +19,7 @@ from glance.errors import AppError, app_error_handler
 from glance.google.factory import Ga4Factory, default_ga4_factory
 from glance.realtime.routes import router as realtime_router
 from glance.realtime.service import SITE_TIMEOUT_SECONDS
+from glance.seo.routes import router as seo_router
 from glance.sites.routes import router as sites_router
 
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -84,6 +85,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(sites_router)
     app.include_router(realtime_router)
+    app.include_router(seo_router)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
     async def api_not_found(path: str) -> JSONResponse:

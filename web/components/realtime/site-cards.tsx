@@ -2,7 +2,7 @@
 
 import { CircleAlert } from "lucide-react";
 
-import { Checkbox } from "@/components/ui/checkbox";
+import { CARD, CARD_CLICKABLE, Stat, Toggle } from "@/components/selectable-card";
 import { formatNumber } from "@/lib/format";
 import type { OkSite, RealtimeErrorKind, RealtimeSite, Totals } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,72 +17,6 @@ const ERROR_LABELS: Record<RealtimeErrorKind, string> = {
   quota: "上限に当たった",
   error: "その他",
 };
-
-// 大きな数字は、幅をそろえない数字のまま出す（design_guideline.md §3）
-function Stat({ label, value, size }: { label: string; value: number; size: "lg" | "md" | "sm" }) {
-  return (
-    <div>
-      <div className="text-xs text-ink-3">{label}</div>
-      <div
-        className={cn(
-          "leading-tight text-ink",
-          size === "lg" && "text-4xl font-semibold",
-          size === "md" && "text-2xl font-semibold",
-          size === "sm" && "text-base font-medium",
-        )}
-      >
-        {formatNumber(value)}
-      </div>
-    </div>
-  );
-}
-
-// 色の付いたチェックボックスと名前。枠と塗りを線の色にする。
-// 名前（ラベル）の当たり判定を、疑似要素でカード全体に広げる（カードは relative にする）。
-// カード全体をラベルにすると、読み上げの名前が数字まで含んだ長い文になるため、この形にする
-function Toggle({
-  name,
-  color,
-  checked,
-  disabled,
-  onChange,
-  title,
-  className,
-}: {
-  name: string;
-  color: string | undefined;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-  title?: string;
-  className?: string;
-}) {
-  return (
-    <label
-      className={cn(
-        "flex min-w-0 items-center gap-2 font-medium",
-        // 薄くした数字（opacity）より上に出すため z-10 にする
-        !disabled && "cursor-pointer after:absolute after:inset-0 after:z-10 after:rounded-xl after:content-['']",
-        className,
-      )}
-      title={title}
-    >
-      <Checkbox
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={onChange}
-        style={{ borderColor: color, backgroundColor: checked ? color : undefined, color: "white" }}
-      />
-      <span className="truncate" title={name}>
-        {name}
-      </span>
-    </label>
-  );
-}
-
-const CARD = "relative rounded-xl border bg-surface";
-// 押せるカードは、ホバーで面を灰色にする
-const CARD_CLICKABLE = `${CARD} cursor-pointer transition-colors hover:bg-hover`;
 
 function sum(sites: OkSite[]): Totals {
   return {
@@ -126,9 +60,9 @@ export function SiteCards({
           <span className="text-xs text-ink-3">選んだ {selected.length} サイト</span>
         </div>
         <div className="mt-3 flex flex-wrap items-end gap-x-10 gap-y-3">
-          <Stat label="PV" value={total.page_views} size="lg" />
-          <Stat label="UU" value={total.active_users} size="lg" />
-          <Stat label="キーイベント" value={total.key_events} size="sm" />
+          <Stat label="PV" value={formatNumber(total.page_views)} size="lg" />
+          <Stat label="UU" value={formatNumber(total.active_users)} size="lg" />
+          <Stat label="キーイベント" value={formatNumber(total.key_events)} size="sm" />
         </div>
       </div>
 
@@ -152,8 +86,8 @@ export function SiteCards({
                 // 外したサイトは、数字を薄くして「合計などに入っていない」ことを示す
                 <div className={cn("space-y-3", !checked && "opacity-50")}>
                   <div className="flex gap-6">
-                    <Stat label="PV" value={site.last_30_min.page_views} size="md" />
-                    <Stat label="UU" value={site.last_30_min.active_users} size="md" />
+                    <Stat label="PV" value={formatNumber(site.last_30_min.page_views)} size="md" />
+                    <Stat label="UU" value={formatNumber(site.last_30_min.active_users)} size="md" />
                   </div>
                   <div className="text-xs text-ink-3">キーイベント {formatNumber(site.last_30_min.key_events)}</div>
                 </div>
