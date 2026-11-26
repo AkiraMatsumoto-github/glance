@@ -133,7 +133,7 @@
 | GSC クエリ×ページ | 未測定。月ごとの整理で減らす |
 | Bing | 数行〜100行 |
 
-LogiShift の規模なら Postgres の性能は問題にならない（「サイト ID＋日付」の索引で十分）。容量は GSC を中心に数GB規模になりうるので、ホスティング先を選ぶ条件に入れる。行数は実装の最初に実測する。
+LogiShift の規模なら Postgres の性能は問題にならない（「サイト ID＋日付」の索引で十分）。容量は GSC を中心に数GB規模になりうる。置き場所は LeadHub と同じ VPS の PostgreSQL（[infrastructure_design.md](infrastructure_design.md) §1・§3）。行数は実装の最初に実測する。
 
 ## 9. 未決事項
 

@@ -7,7 +7,8 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 | ファイル | 内容 |
 |---|---|
 | [docs/01_design/overview.md](docs/01_design/overview.md) | 企画・システム概要（ターゲット、目的、競合との差別化、全体の構成） |
-| [docs/01_design/data_sources.md](docs/01_design/data_sources.md) | データ取得（GA4・GSC・Bing のバッチ） |
+| [docs/01_design/data_sources.md](docs/01_design/data_sources.md) | データ取得（GA4・GSC・Bing のバッチ、GA4 リアルタイム） |
 | [docs/01_design/database_design.md](docs/01_design/database_design.md) | DB 設計 |
 | [docs/01_design/api_design.md](docs/01_design/api_design.md) | 集計 API（問い合わせ指定） |
 | [docs/01_design/ai_query_design.md](docs/01_design/ai_query_design.md) | 生成 AI（全体サマリー・会話） |
+| [docs/01_design/infrastructure_design.md](docs/01_design/infrastructure_design.md) | インフラ（ホスティング、ドメイン、ログイン、秘密の置き場所、バックアップ） |
