@@ -1,3 +1,4 @@
+import { LogIn } from "lucide-react";
 import Link from "next/link";
 
 import { HeaderNav } from "@/components/app-header";
@@ -6,28 +7,37 @@ import { buttonVariants } from "@/components/ui/button";
 const NAV = [
   { href: "/demo", label: "リアルタイム" },
   { href: "/demo/seo", label: "SEO" },
+  { href: "/demo/settings/sites", label: "サイト設定" },
 ];
 
 // デモの画面の共通部分（docs/01_design/screen_design.md §6）。ログインせずに、ダミーの数字で画面を見る。
-// ヘッダーは「Glance」「デモ」の印、デモの画面のメニュー、「ログイン」だけ（サイト設定とログアウトは出さない）
+// ヘッダーは「Glance」「デモ」の印、デモの画面のメニュー、「ログイン」だけ（ログアウトは出さない）
 export default function DemoLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <header className="sticky top-0 z-40 border-b bg-surface">
-        <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
-          <div className="flex items-center gap-2">
-            <Link href="/demo" className="text-lg font-semibold tracking-tight">
+        {/* スマホでは横幅が足りないので、間を詰め、「Glance」の字を出さず（「デモ」の印は残す）、「ログイン」は印だけにする */}
+        <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-6 sm:px-6">
+          <div className="flex shrink-0 items-center gap-2">
+            <Link href="/demo" className="text-lg font-semibold tracking-tight max-sm:hidden">
               Glance
             </Link>
-            <span className="rounded-md bg-hover px-2 py-0.5 text-xs font-medium text-ink-2">デモ</span>
+            <span className="rounded-md bg-hover px-2 py-0.5 text-xs font-medium whitespace-nowrap text-ink-2">デモ</span>
           </div>
           <HeaderNav items={NAV} />
-          <Link href="/login" className={buttonVariants({ size: "sm", className: "ml-auto" })}>
-            ログイン
+          <Link
+            href="/login"
+            aria-label="ログイン"
+            title="ログイン"
+            className={buttonVariants({ size: "sm", className: "ml-auto shrink-0" })}
+          >
+            <LogIn className="sm:hidden" aria-hidden />
+            <span className="max-sm:hidden">ログイン</span>
           </Link>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">{children}</main>
+      {/* 幅と余白は、各画面が固定バー（PageBar）と中身（PageBody）で持つ */}
+      <main className="flex-1">{children}</main>
     </>
   );
 }

@@ -1,4 +1,4 @@
-"""サイト設定の API（technical_design.md §6）。
+"""サイト設定の API（technical_design.md §6）と、デモ用の GET /api/demo/sites ほか（§6.4）。
 
 サイトは、ログイン中の利用者の顧客のものだけを扱う。
 """
@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from glance.auth.deps import CurrentUser, Db
 from glance.db.models import Connection, Site, User
 from glance.errors import AppError
+from glance.sites import demo
 from glance.google.ga4 import Ga4Client, Ga4PermissionDenied, ReauthRequired
 
 router = APIRouter(prefix="/api")
@@ -20,12 +21,21 @@ PropertyId = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,20}$")]
 SiteName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
+class SiteLinks(BaseModel):
+    """Search Console・Bing の紐づけ先。紐づけていないものは None。"""
+
+    gsc_site_url: str | None
+    bing_site_url: str | None
+
+
 class SiteOut(BaseModel):
     id: int
     name: str
     sort_order: int
     timezone: str
     ga4_property_id: str | None
+    # Search Console・Bing の紐づけ。紐づけの API があるときだけ返す（今はデモだけ。本物は None）
+    links: SiteLinks | None = None
 
 
 class SiteCreate(BaseModel):
@@ -38,10 +48,24 @@ class SiteUpdate(BaseModel):
     position: int | None = Field(default=None, ge=0)
 
 
+class SearchConsoleMatch(BaseModel):
+    """GA4 のプロパティと同じドメインの Search Console のサイト（site_url。見つからなければ None）と、選べるサイト。"""
+
+    site_url: str | None
+    candidates: list[str]
+
+
 class PropertyOut(BaseModel):
     property_id: str
     name: str
     added: bool
+    # 追加するときに一緒に紐づける Search Console のサイト。紐づけの API があるときだけ返す（今はデモだけ）
+    search_console: SearchConsoleMatch | None = None
+
+
+class BingSitesOut(BaseModel):
+    key_saved: bool  # Bing の API キーを保存済みか（キーそのものは返さない）
+    sites: list[str]  # そのキーで見られる Bing のサイト
 
 
 class AccountOut(BaseModel):
@@ -165,3 +189,27 @@ async def delete_site(site_id: int, db: Db, user: CurrentUser) -> Response:
     _renumber(await _sites(db, user.tenant_id))
     await db.commit()
     return Response(status_code=204)
+
+
+# デモ（ログイン不要。見るだけ）。ダミーだけを返し、DB・Google・Bing・利用者のデータには触れない（glance/sites/demo.py）。
+# 書き込みの API はデモにはない（画面でボタンを押せなくする）
+
+
+@router.get("/demo/sites")
+async def demo_sites() -> list[SiteOut]:
+    return [SiteOut.model_validate(site) for site in demo.sites()]
+
+
+@router.get("/demo/ga4/properties")
+async def demo_properties() -> list[AccountOut]:
+    return [AccountOut.model_validate(account) for account in demo.accounts()]
+
+
+@router.get("/demo/gsc/sites")
+async def demo_gsc_sites() -> list[str]:
+    return demo.GSC_SITES
+
+
+@router.get("/demo/bing/sites")
+async def demo_bing_sites() -> BingSitesOut:
+    return BingSitesOut.model_validate(demo.bing())

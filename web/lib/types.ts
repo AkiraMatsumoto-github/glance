@@ -2,15 +2,29 @@
 
 export type Me = { email: string };
 
+// Search Console・Bing の紐づけ先。紐づけていないものは null
+export type SiteLinks = { gsc_site_url: string | null; bing_site_url: string | null };
+
 export type Site = {
   id: number;
   name: string;
   sort_order: number;
   timezone: string;
   ga4_property_id: string | null;
+  // 紐づけの API があるときだけ入る（今はデモだけ。本物は null）
+  links: SiteLinks | null;
 };
 
-export type GaProperty = { property_id: string; name: string; added: boolean };
+// GA4 のプロパティと同じドメインの Search Console のサイト（見つからなければ null）と、選べるサイト
+export type SearchConsoleMatch = { site_url: string | null; candidates: string[] };
+export type GaProperty = {
+  property_id: string;
+  name: string;
+  added: boolean;
+  search_console: SearchConsoleMatch | null; // 紐づけの API があるときだけ入る（今はデモだけ）
+};
+// Bing の API キーを保存済みか（キーそのものは返さない）と、そのキーで見られるサイト
+export type BingSites = { key_saved: boolean; sites: string[] };
 export type GaAccount = { account_id: string; name: string; properties: GaProperty[] };
 
 export type Totals = { page_views: number; active_users: number; key_events: number };

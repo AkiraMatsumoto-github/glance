@@ -84,3 +84,30 @@ async def test_other_tenant_cannot_see_sites(logged_in: AsyncClient, database_ur
     assert (await logged_in.get("/api/sites")).json() == []
     assert (await logged_in.patch(f"/api/sites/{site['id']}", json={"name": "x"})).status_code == 404
     assert (await logged_in.delete(f"/api/sites/{site['id']}", headers=JSON)).status_code == 404
+
+
+async def test_demo_sites_need_no_login_and_touch_no_data(client: AsyncClient, database_url: str) -> None:
+    sites = await client.get("/api/demo/sites")
+    assert sites.status_code == 200
+    assert [s["name"] for s in sites.json()] == ["デモサイト A", "デモサイト B", "デモサイト C", "デモサイト D", "デモサイト E"]
+    properties = await client.get("/api/demo/ga4/properties")
+    assert properties.status_code == 200
+    listed = [(p["name"], p["added"]) for a in properties.json() for p in a["properties"]]
+    # 追加済みはデモの5サイト。未追加の見え方を見せるためのものが1つ
+    assert [name for name, added in listed if added] == [s["name"] for s in sites.json()]
+    assert [name for name, added in listed if not added] == ["デモサイト F"]
+    # デモの5サイトは、Search Console と Bing を紐づけ済み。紐づけ先は、選べる一覧の中にある
+    gsc = (await client.get("/api/demo/gsc/sites")).json()
+    bing = (await client.get("/api/demo/bing/sites")).json()
+    assert bing["key_saved"] is True
+    for site in sites.json():
+        assert site["links"]["gsc_site_url"] in gsc
+        assert site["links"]["bing_site_url"] in bing["sites"]
+    # F は Search Console のサイトが見つからない例。選べる一覧は出す
+    not_added = next(p for a in properties.json() for p in a["properties"] if not p["added"])
+    assert not_added["search_console"] == {"site_url": None, "candidates": gsc}
+    # デモには書き込みの API がない
+    assert (await client.post("/api/demo/sites", json={"property_id": "900000006"})).status_code in (404, 405)
+    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(url) as conn:
+        assert conn.execute("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM sites)").fetchone() == (0, 0)

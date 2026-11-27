@@ -20,7 +20,7 @@
 | `users` | 利用者（顧客 ID、Google のアカウント ID（`sub`）、メールアドレス、更新トークン（暗号化）、許可された範囲、最後にログインした日時）。初めてログインしたときに作る（[technical_design.md](technical_design.md) §4） |
 | `sessions` | ログインのセッション（セッション ID のハッシュ、利用者 ID、期限） |
 | `sites` | サイト（顧客 ID、名前、並び順、タイムゾーン、GA4 プロパティ ID、GSC サイト URL、Bing サイト URL） |
-| `connections` | データ接続（サイト ID、ソース、認証方式、利用者 ID（Google ログインのとき。その利用者の更新トークンで API を呼ぶ）、認証情報（暗号化。Bing の API キーなど）） |
+| `connections` | データ接続（サイト ID、ソース、認証方式、利用者 ID（Google ログインのとき。その利用者の更新トークンで API を呼ぶ）、紐づけ先（Search Console のサイト URL・Bing のサイト URL。2番目の段階で足す）、認証情報（暗号化。Bing の API キーなど）） |
 | `site_exclusions` | 除外設定（サイト ID、名前、対象の列、条件、値、既定でオンか）。[api_design.md](api_design.md) の除外設定 |
 | `data_notes` | データ注記（サイト ID、対象のソース・指標・軸、期間、注記文）。結果が該当期間・項目に触れるとき、グラフの下に表示する |
 | `sync_runs` | 取得ログ（[data_sources.md](data_sources.md) の共通ルール） |

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { LoadingIndicator } from "@/components/loading-indicator";
 import { Notice } from "@/components/notice";
+import { PageBar, PageBody } from "@/components/page-bar";
 import { Segmented } from "@/components/segmented";
 import { COMPARE_OPACITY, type DateRow, DateLineChart, type Series } from "@/components/seo/date-line-chart";
 import {
@@ -17,6 +18,7 @@ import {
 import { RankingTable } from "@/components/seo/ranking-table";
 import { SeoCards } from "@/components/seo/seo-cards";
 import { SeriesLegend } from "@/components/series-legend";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api, errorMessage } from "@/lib/api";
 import { countDays, formatCompact, formatDate, formatNumber, formatRange, siteColor } from "@/lib/format";
@@ -97,9 +99,12 @@ export function SeoView({ endpoint }: { endpoint: string }) {
   const url = buildUrl(endpoint, engine, period, compare, start, end);
 
   const [data, setData] = useState<Seo | null>(() => (url && lastResults.get(url)) || null);
-  const [doneUrl, setDoneUrl] = useState<string | null>(null);
+  // 「更新」を押した回数。同じ条件でも取り直すため、取る条件の印に入れる
+  const [reloads, setReloads] = useState(0);
+  const request = url === null ? null : `${url}#${reloads}`;
+  const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const loading = url !== null && url !== doneUrl;
+  const loading = request !== null && request !== done;
 
   const [metric, setMetric] = useState<SeoMetric>("clicks");
   const [crawlMetric, setCrawlMetric] = useState<CrawlMetric>("indexed");
@@ -109,8 +114,10 @@ export function SeoView({ endpoint }: { endpoint: string }) {
   // 日ごとの推移に比べる期間の破線を重ねるか。線が倍になって読みにくくなるので、初めは重ねない
   const [overlayCompare, setOverlayCompare] = useState(false);
 
+  // 開いたとき・条件を変えたとき・「更新」を押したときに取る
   useEffect(() => {
     if (url === null) return;
+    const key = `${url}#${reloads}`;
     // 条件を続けて変えたときは、最後の条件の結果だけを出す
     let cancelled = false;
     api<Seo>(url).then(
@@ -119,18 +126,18 @@ export function SeoView({ endpoint }: { endpoint: string }) {
         lastResults.set(url, result);
         setData(result);
         setError(null);
-        setDoneUrl(url);
+        setDone(key);
       },
       (e: unknown) => {
         if (cancelled) return;
         setError(errorMessage(e));
-        setDoneUrl(url);
+        setDone(key);
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, reloads]);
 
   function choosePeriod(value: SeoPeriodName) {
     // 指定に切り替えたときは、いま出している期間を初めの値にする
@@ -174,57 +181,13 @@ export function SeoView({ endpoint }: { endpoint: string }) {
   const dataUntil = data && `${formatDate(data.data_until)}までのデータ`;
 
   return (
-    <div className="space-y-5">
-      {/* 期間・比べる・Google/Bing は、ヘッダーの下に固定し、スクロールしても常に出す（screen_design.md §7）。
-          画面の端から端まで白い面と下の線を引いて、ヘッダーの2段目のように見せる（globals.css の bar-full-bleed）。
-          -mt-6 で main の上の余白を打ち消し、初めからヘッダーに付ける。z-20 はヘッダー（z-40）より下、カードより上 */}
-      <div className="bar-full-bleed sticky top-14 z-20 -mt-6 space-y-1.5 py-2.5">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5">
-          <label className="flex items-center gap-2 text-ink-2">
-            {/* スマホでは1行に収めるため、名前は読み上げだけにする */}
-            <span className="max-sm:sr-only">期間</span>
-            <select className={CONTROL} value={period} onChange={(e) => choosePeriod(e.target.value as SeoPeriodName)}>
-              {PERIODS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {period === "custom" && (
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                aria-label="期間の始まり"
-                className={CONTROL}
-                value={start}
-                max={data?.data_until}
-                onChange={(e) => setStart(e.target.value)}
-              />
-              〜
-              <input
-                type="date"
-                aria-label="期間の終わり"
-                className={CONTROL}
-                value={end}
-                max={data?.data_until}
-                onChange={(e) => setEnd(e.target.value)}
-              />
-            </div>
-          )}
-          <label className="flex items-center gap-2 text-ink-2">
-            <span className="max-sm:sr-only">比べる</span>
-            <select className={CONTROL} value={compare} onChange={(e) => setCompare(e.target.value as SeoCompareName)}>
-              {COMPARES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* いつまでのデータかは Google と Bing で違うので、切り替えの隣に置く */}
-          <div className="ml-auto flex items-center gap-3">
-            {dataUntil && <span className="text-ink-3 max-sm:hidden">{dataUntil}</span>}
+    <>
+      {/* Google/Bing・期間・比べる・「更新」は固定バーに置き、スクロールしても常に出す（screen_design.md §1・§7）。
+          左端は Google/Bing、右端は「更新」（リアルタイムとそろえる） */}
+      <PageBar>
+        {/* PC は「左の操作｜右の更新」の下に実際の期間。スマホは操作で1行を使い、「更新」は2行目の右に回す（バーを低く保つ） */}
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 [grid-template-areas:'controls_controls'_'range_refresh'] sm:[grid-template-areas:'controls_refresh'_'range_range']">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 [grid-area:controls] sm:gap-x-5">
             <Segmented
               label="検索エンジン"
               options={[
@@ -234,124 +197,175 @@ export function SeoView({ endpoint }: { endpoint: string }) {
               value={engine}
               onChange={setEngine}
             />
-          </div>
-        </div>
-        {data && (
-          <p className="text-xs text-ink-3">
-            {formatRange(data.period.start, data.period.end)}（{countDays(data.period.start, data.period.end)}日間）
-            {data.compare && `を ${formatRange(data.compare.start, data.compare.end)} と比べる`}
-            {/* スマホでは、いつまでのデータかをこの行に回す */}
-            <span className="sm:hidden">（{dataUntil}）</span>
-          </p>
-        )}
-      </div>
-
-      <h1 className="text-xl font-semibold">SEO</h1>
-
-      {error && <Notice>{error}</Notice>}
-
-      {/* 取っている間は、前の数字はそのまま出し、画面の真ん中に印を出すだけにする */}
-      {loading && <LoadingIndicator />}
-
-      {data && (
-        <div className="space-y-5">
-          <SeoCards
-            engine={data.engine}
-            sites={data.sites}
-            selected={selected}
-            colors={colors}
-            hasCompare={hasCompare}
-            onToggle={toggle}
-            showTotal={showTotal}
-            onToggleTotal={setShowTotal}
-          />
-
-          <section className="rounded-xl border bg-surface">
-            <div className="border-b px-4 py-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <h2 className="text-base font-medium">日ごとの推移</h2>
-                <Segmented
-                  label="指標"
-                  options={metrics.map((m) => ({ value: m, label: METRIC_LABELS[m] }))}
-                  value={chartMetric}
-                  onChange={setMetric}
+            <label className="flex items-center gap-2 text-ink-2">
+              {/* スマホでは1行に収めるため、名前は読み上げだけにする */}
+              <span className="max-sm:sr-only">期間</span>
+              <select className={CONTROL} value={period} onChange={(e) => choosePeriod(e.target.value as SeoPeriodName)}>
+                {PERIODS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {period === "custom" && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  aria-label="期間の始まり"
+                  className={CONTROL}
+                  value={start}
+                  max={data?.data_until}
+                  onChange={(e) => setStart(e.target.value)}
                 />
-                {/* 比べないときは、重ねるものがないので出さない */}
-                {hasCompare && (
-                  <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-ink-2">
-                    <Checkbox checked={overlayCompare} onCheckedChange={setOverlayCompare} />
-                    比べる期間を重ねる
-                  </label>
-                )}
+                〜
+                <input
+                  type="date"
+                  aria-label="期間の終わり"
+                  className={CONTROL}
+                  value={end}
+                  max={data?.data_until}
+                  onChange={(e) => setEnd(e.target.value)}
+                />
               </div>
-              {selected.length > 0 && (
-                <SeriesLegend sites={selected} colors={colors} showTotal={showTotal}>
-                  {showCompare && (
-                    <li className="flex items-center gap-1.5">
-                      <span
-                        className="w-4 border-t-2 border-dashed border-ink-3"
-                        style={{ opacity: COMPARE_OPACITY }}
-                        aria-hidden
-                      />
-                      比べる期間
-                    </li>
-                  )}
-                </SeriesLegend>
-              )}
-            </div>
-            <div className="px-2 py-4">
-              {selected.length > 0 ? (
-                <DateLineChart
-                  rows={dailyRows(selected, chartMetric, showCompare)}
-                  series={dailySeries}
-                  title={METRIC_LABELS[chartMetric]}
-                  format={(v) => formatMetric(v, chartMetric)}
-                  axisFormat={(v) => formatMetricAxis(v, chartMetric)}
-                  reversed={chartMetric === "position"}
-                />
-              ) : (
-                <SelectPrompt />
-              )}
-            </div>
-          </section>
+            )}
+            <label className="flex items-center gap-2 text-ink-2">
+              <span className="max-sm:sr-only">比べる</span>
+              <select className={CONTROL} value={compare} onChange={(e) => setCompare(e.target.value as SeoCompareName)}>
+                {COMPARES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {/* いつまでのデータかは「更新」の隣に置く（リアルタイムの「◯ に取得」と同じ位置） */}
+          <div className="flex items-center gap-3 justify-self-end [grid-area:refresh]">
+            {dataUntil && <span className="text-ink-3 max-sm:hidden">{dataUntil}</span>}
+            <Button onClick={() => setReloads((n) => n + 1)} disabled={loading}>
+              {loading ? "取得中…" : "更新"}
+            </Button>
+          </div>
+          {data && (
+            <p className="text-xs text-ink-3 [grid-area:range]">
+              {formatRange(data.period.start, data.period.end)}（{countDays(data.period.start, data.period.end)}日間）
+              {data.compare && `を ${formatRange(data.compare.start, data.compare.end)} と比べる`}
+              {/* スマホでは、いつまでのデータかをこの行に回す */}
+              <span className="sm:hidden">（{dataUntil}）</span>
+            </p>
+          )}
+        </div>
+      </PageBar>
+      <PageBody>
+        {/* 題は、ヘッダーのメニューでどの画面かわかるので画面には出さず、読み上げ用だけにする */}
+        <h1 className="sr-only">SEO</h1>
 
-          {/* Bing のクエリは今は取らない（data_sources.md §4） */}
-          {data.engine === "google" && <RankingTable kind="query" sites={selected} colors={colors} hasCompare={hasCompare} />}
-          <RankingTable kind="page" sites={selected} colors={colors} hasCompare={hasCompare} />
+        {error && <Notice>{error}</Notice>}
 
-          {data.engine === "bing" && (
+        {/* 取っている間は、前の数字はそのまま出し、画面の真ん中に印を出すだけにする */}
+        {loading && <LoadingIndicator />}
+
+        {data && (
+          <div className="space-y-5">
+            <SeoCards
+              engine={data.engine}
+              sites={data.sites}
+              selected={selected}
+              colors={colors}
+              hasCompare={hasCompare}
+              onToggle={toggle}
+              showTotal={showTotal}
+              onToggleTotal={setShowTotal}
+            />
+
             <section className="rounded-xl border bg-surface">
               <div className="border-b px-4 py-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-base font-medium">クロールとインデックス</h2>
+                  <h2 className="text-base font-medium">日ごとの推移</h2>
                   <Segmented
                     label="指標"
-                    options={(Object.keys(CRAWL_LABELS) as CrawlMetric[]).map((m) => ({ value: m, label: CRAWL_LABELS[m] }))}
-                    value={crawlMetric}
-                    onChange={setCrawlMetric}
+                    options={metrics.map((m) => ({ value: m, label: METRIC_LABELS[m] }))}
+                    value={chartMetric}
+                    onChange={setMetric}
                   />
+                  {/* 比べないときは、重ねるものがないので出さない */}
+                  {hasCompare && (
+                    <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-ink-2">
+                      <Checkbox checked={overlayCompare} onCheckedChange={setOverlayCompare} />
+                      比べる期間を重ねる
+                    </label>
+                  )}
                 </div>
-                {selected.length > 0 && <SeriesLegend sites={selected} colors={colors} />}
+                {selected.length > 0 && (
+                  <SeriesLegend sites={selected} colors={colors} showTotal={showTotal}>
+                    {showCompare && (
+                      <li className="flex items-center gap-1.5">
+                        <span
+                          className="w-4 border-t-2 border-dashed border-ink-3"
+                          style={{ opacity: COMPARE_OPACITY }}
+                          aria-hidden
+                        />
+                        比べる期間
+                      </li>
+                    )}
+                  </SeriesLegend>
+                )}
               </div>
               <div className="px-2 py-4">
                 {selected.length > 0 ? (
-                  // インデックス数はその日の在庫なので、サイトを足した合計の線は出さない
                   <DateLineChart
-                    rows={crawlRows(selected, crawlMetric)}
-                    series={selected.map((s) => ({ key: `s${s.site_id}`, name: s.name, color: colors.get(s.site_id) }))}
-                    title={CRAWL_LABELS[crawlMetric]}
-                    format={formatNumber}
-                    axisFormat={formatCompact}
+                    rows={dailyRows(selected, chartMetric, showCompare)}
+                    series={dailySeries}
+                    title={METRIC_LABELS[chartMetric]}
+                    format={(v) => formatMetric(v, chartMetric)}
+                    axisFormat={(v) => formatMetricAxis(v, chartMetric)}
+                    reversed={chartMetric === "position"}
                   />
                 ) : (
                   <SelectPrompt />
                 )}
               </div>
             </section>
-          )}
-        </div>
-      )}
-    </div>
+
+            {/* Bing のクエリは今は取らない（data_sources.md §4） */}
+            {data.engine === "google" && <RankingTable kind="query" sites={selected} colors={colors} hasCompare={hasCompare} />}
+            <RankingTable kind="page" sites={selected} colors={colors} hasCompare={hasCompare} />
+
+            {data.engine === "bing" && (
+              <section className="rounded-xl border bg-surface">
+                <div className="border-b px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-base font-medium">クロールとインデックス</h2>
+                    <Segmented
+                      label="指標"
+                      options={(Object.keys(CRAWL_LABELS) as CrawlMetric[]).map((m) => ({ value: m, label: CRAWL_LABELS[m] }))}
+                      value={crawlMetric}
+                      onChange={setCrawlMetric}
+                    />
+                  </div>
+                  {selected.length > 0 && <SeriesLegend sites={selected} colors={colors} />}
+                </div>
+                <div className="px-2 py-4">
+                  {selected.length > 0 ? (
+                    // インデックス数はその日の在庫なので、サイトを足した合計の線は出さない
+                    <DateLineChart
+                      rows={crawlRows(selected, crawlMetric)}
+                      series={selected.map((s) => ({ key: `s${s.site_id}`, name: s.name, color: colors.get(s.site_id) }))}
+                      title={CRAWL_LABELS[crawlMetric]}
+                      format={formatNumber}
+                      axisFormat={formatCompact}
+                    />
+                  ) : (
+                    <SelectPrompt />
+                  )}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+      </PageBody>
+    </>
   );
 }
 

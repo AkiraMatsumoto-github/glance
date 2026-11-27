@@ -118,6 +118,7 @@ glance/
 | `GET /api/realtime` | 全サイトのリアルタイムを取る（§6.1） |
 | `GET /api/demo/realtime` | デモ用のダミーの数字（§6.2）。ログイン不要 |
 | `GET /api/demo/seo` | SEO の画面のデモ用のダミーの数字（§6.3）。ログイン不要 |
+| `GET /api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/gsc/sites`・`/api/demo/bing/sites` | サイト設定のデモ用のダミー（§6.4）。ログイン不要 |
 
 ### 6.1 `GET /api/realtime`
 
@@ -212,9 +213,32 @@ glance/
 - `queries`・`pages` は、サイトごとにクリックの多い順で100件まで。`compare_clicks` は、比べる期間のクリック。比べる期間の100件に入っていないものは `null`。
 - Bing のとき: 日ごとの `position` は `null`（`totals` の `position` も `null`）。`queries` は空（今は取らない。[data_sources.md](data_sources.md) §4）。`crawl` に日ごとの `{"date", "crawled", "indexed", "errors"}` を入れる（`indexed` はその日の在庫なので足さない）。Google のときの `crawl` は `null`。
 
+### 6.4 サイト設定の紐づけと、デモの API
+
+サイト設定は、GA4・Search Console・Bing の列を並べる。Search Console は、GA4 のプロパティを追加するときに一緒に紐づける（[screen_design.md](screen_design.md) §4）。画面はデモで先に作った（2026-11-27）。
+
+**応答の形**（本物とデモで同じ）
+
+- `GET /api/sites` の各サイトに `links`（`{"gsc_site_url": "sc-domain:…" | null, "bing_site_url": "https://…/" | null}`）。紐づけの API があるときだけ入れる。本物は、紐づけの保存（下）を作るまで `null` を返し、画面は Search Console・Bing の列を出さない。
+- `GET /api/ga4/properties` の各プロパティに `search_console`（`{"site_url": 同じドメインのサイト | null, "candidates": [選べるサイト]}`）。追加済みのプロパティは `null`。本物は、作るまで `null`。
+- `GET /api/gsc/sites`: ログインしたアカウントが見られる Search Console のサイトの一覧（`["sc-domain:…", "https://…/"]`）。
+- `GET /api/bing/sites`: `{"key_saved": true, "sites": ["https://…/"]}`。保存済みの API キーで見られる Bing のサイト。キーそのものは返さない。
+
+**デモ**（`/api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/gsc/sites`・`/api/demo/bing/sites`。`glance/sites/demo.py`）
+
+- ログイン不要。デモのサイト設定（[screen_design.md](screen_design.md) §6）が使う。
+- サイトは「デモサイト A〜E」（`glance/google/fake.py` の `DEMO_SITES`）で、Search Console と Bing を紐づけ済み。ドメインは `demo-a.example` など（`.example` は例のために取ってあるもので、実在しない）。プロパティは、その5つ（追加済み）と、未追加で Search Console のサイトが見つからない「デモサイト F」。
+- 書き込みの API はない（デモのサイト設定は見るだけ）。DB・Google・Bing・利用者のデータには触れない（テストで確かめる）。
+
+**本物で作るもの**（[roadmap.md](roadmap.md) §3.1）
+
+- `connections` に紐づけ先の列（Search Console のサイト URL・Bing のサイト URL）を足す。Bing の API キーは利用者ごとに1つで、暗号化して持つ（[database_design.md](database_design.md) §2）。
+- 同じドメインの Search Console のサイトを選ぶ: GA4 の Admin API でプロパティのウェブのデータストリームの URL を取り（`properties.dataStreams.list`）、Search Console API のサイト一覧（`sites.list`）から、`sc-domain:そのドメイン` かそのドメインの URL のサイトを探す。1つだけ見つかったときに選んでおく。
+- 書き込み: サイトの追加で Search Console のサイトも受け取る、Search Console・Bing の紐づけの保存、Bing の API キーの保存（入れ直し）と「見る」。
+
 ## 7. 画面（Next.js）
 
-- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモのリアルタイム）・`/demo/seo`（デモの SEO）の5つ。デモの2つはログイン不要。中身は [screen_design.md](screen_design.md)。
+- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモのリアルタイム）・`/demo/seo`（デモの SEO）・`/demo/settings/sites`（デモのサイト設定）の6つ。デモの3つはログイン不要。中身は [screen_design.md](screen_design.md)。
 - データは、画面から `/api` を呼んで取る（ブラウザ側）。401 が返ったら `/login` へ移す（`reauth_required` のときは、理由を出してから移す）。
 - 画面に出す文字は、すべて React が描く（エスケープされる）。`dangerouslySetInnerHTML` は使わない（[overview.md](overview.md) §5）。
 

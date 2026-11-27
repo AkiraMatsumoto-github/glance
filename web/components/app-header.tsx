@@ -18,13 +18,14 @@ const NAV = [
 export function HeaderNav({ items }: { items: { href: string; label: string }[] }) {
   const pathname = usePathname();
   return (
-    <nav className="flex items-center gap-1 text-sm">
+    // 入りきらない狭い画面では、メニューの中だけ横にスクロールさせる（ページの幅は広げない）
+    <nav className="flex min-w-0 items-center gap-1 overflow-x-auto text-sm">
       {items.map((item) => (
         <Link
           key={item.href}
           href={item.href}
           className={cn(
-            "rounded-md px-2 py-1.5 whitespace-nowrap text-ink-2 hover:bg-hover hover:text-ink sm:px-3",
+            "rounded-md px-1.5 py-1.5 whitespace-nowrap text-ink-2 hover:bg-hover hover:text-ink sm:px-3",
             pathname === item.href && "bg-hover font-medium text-ink",
           )}
         >

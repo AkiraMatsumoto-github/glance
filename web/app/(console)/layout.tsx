@@ -5,7 +5,8 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   return (
     <>
       <AppHeader />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">{children}</main>
+      {/* 幅と余白は、各画面が固定バー（PageBar）と中身（PageBody）で持つ */}
+      <main className="flex-1">{children}</main>
     </>
   );
 }

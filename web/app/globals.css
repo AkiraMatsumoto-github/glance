@@ -139,9 +139,3 @@
     line-height: 1.4;
   }
 }
-
-/* 画面の端から端まで白い面と下の線を描く（SEO の画面の固定バー。docs/01_design/screen_design.md §7）。
-   border-image を左右に外へ広げて描く。外へ広げた分は描くだけでページの幅に数えないので、横のスクロールは出ない */
-@utility bar-full-bleed {
-  border-image: linear-gradient(to top, var(--border) 1px, var(--surface) 1px) fill 0 / 0 / 0 100vmax;
-}
