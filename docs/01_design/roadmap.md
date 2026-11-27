@@ -34,7 +34,7 @@
 | 7 | 外販の準備 | 未 |
 | あとで | VPS に出す（ドメイン・Cloudflare・反映の仕組み・本番の Google の設定） | 急がない。必要になったら（§3.7） |
 
-**2番目を急ぐ理由**: Bing の日次は約98日・ページ別は13週しかさかのぼれず、GSC も16ヶ月より前は消える。取り込みを始めるのが遅れるほど、古い日が取れなくなる。次は2番目に入り、VPS に出すまではバッチを手元で動かす（§3.1）。
+**2番目を急ぐ理由**: Bing の日次は約98日・ページ別は13週しかさかのぼれず、GSC も16ヶ月より前は消える。取り込みを始めるのが遅れるほど、古い日が取れなくなる。Cloudflare のアナリティクスを入れる場合も同じで、Free・Pro のプランでは31日分しか残らない（§3.1）。次は2番目に入り、VPS に出すまではバッチを手元で動かす（§3.1）。
 
 ---
 
@@ -55,6 +55,13 @@
 - [ ] DB のバックアップ（`pg_dump` を DB の置き場所の外へ。VPS に出すまでは手元の DB が対象）。**ここから DB が、取り直せないデータの唯一の置き場所になる**
 - [ ] SEO の画面（`/seo`。Google と Bing を切り替える。合計とサイトのカード、日ごとの推移、クエリ、ページ、Bing のクロールとインデックス）。見た目と部品は、デモ（`/demo/seo`）で先に作った（2026-11-26）。本物は `GET /api/seo` を同じ応答の形で作り（[technical_design.md](technical_design.md) §6.3）、ヘッダーのメニューに足す。集計は、4番目の問い合わせ指定の仕組みのうち、この画面に要る分（GSC・Bing の日ごと・クエリ・ページの集計と比較）を先に作って使う
 - [ ] 作る前に確かめること（[data_sources.md](data_sources.md) §7 の GSC・Bing の項目）
+- [ ] Cloudflare のアナリティクスの取り込み（入れるかは未決。§4。2026-11-27 に検討を始めた）
+  - 使い道: GA4 に映らないボットを含めた総アクセスを見る。接続元の IP で判定した国を、GA4 の国（Zaraz への切り替え後に信頼できない。[api_design.md](api_design.md) §5.2）と照らし合わせる
+  - API: GraphQL Analytics API。まずゾーンの HTTP リクエスト（`httpRequestsAdaptiveGroups`）を「日付×国×ボットかどうか」「日付×パス（上位）」で取る。Web Analytics（`rumPageloadEventsAdaptiveGroups`）は GA4 と重なるので後回し
+  - 認証: API トークン（ゾーンの Analytics Read。Web Analytics も取るならアカウントの Analytics Read を足す。対象のゾーンだけに絞る）。アカウント全体を操作できる Global API Key は使わない。トークンは暗号化して `connections` に入れる
+  - 癖: Free・Pro は31日分しか残らず、1回に取れるのは30日分まで。数字はサンプリングされた概算なので、画面で注記する
+  - 対象: LogiShift（Zaraz を使っているので Cloudflare を通っているはず）。ほかのサイトが Cloudflare を通っているかは人が確かめる
+  - 作る前に、設計を [data_sources.md](data_sources.md)・[database_design.md](database_design.md) に足す
 - いったん置いておく（2026-11-26 利用者の決定）: データの状態の画面（いつまでのデータがあるか、最後に取り込んだ日時）と「いま取り込む」ボタン
 
 ### 3.2 3番目: GA4 のバッチ
@@ -132,6 +139,7 @@
 | いつまでに | 決めること | 書いてある所 |
 |---|---|---|
 | 2番目 | バックアップの置き場所 | [infrastructure_design.md](infrastructure_design.md) §8 |
+| 2番目 | Cloudflare のアナリティクスを取り込むか、何を取るか（ボット・総アクセスの把握か、PV などのアクセス解析か）。入れるなら早く始める（31日分しか残らない） | §3.1 |
 | 2番目 | 手元でのバッチの動かし方（今はコマンドを打つ形。WSL の cron で自動にするかは、使ってみて決める） | — |
 | VPS に出すとき | 日次バッチの動かし方（systemd のタイマーなど） | [infrastructure_design.md](infrastructure_design.md) §8 |
 | 3番目 | チャネルの対応表に日付を持たせるか、対応表の更新の仕方 | [database_design.md](database_design.md) §9 |
