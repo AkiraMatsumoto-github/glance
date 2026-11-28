@@ -2,7 +2,19 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -27,7 +39,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"))
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     google_sub: Mapped[str] = mapped_column(String(255), unique=True)
     email: Mapped[str] = mapped_column(String(320))
     # 更新トークン（Fernet で暗号化したもの）。2番目の段階で Google ログインをつないでから入る
@@ -49,7 +61,10 @@ class LoginSession(Base):
 
 
 class Site(Base):
-    """サイト。並び順はリアルタイムの表・グラフの色の順になる。"""
+    """サイト。並び順はリアルタイムの表・グラフの色の順になる。
+
+    Search Console・Bing の紐づけ先は、接続設定（connections）の target に持つ。
+    """
 
     __tablename__ = "sites"
     __table_args__ = (UniqueConstraint("tenant_id", "ga4_property_id"),)
@@ -60,8 +75,6 @@ class Site(Base):
     sort_order: Mapped[int] = mapped_column(Integer)
     timezone: Mapped[str] = mapped_column(String(64))
     ga4_property_id: Mapped[str | None] = mapped_column(String(32))
-    gsc_site_url: Mapped[str | None] = mapped_column(Text)
-    bing_site_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -84,21 +97,26 @@ class BingKey(Base):
 
 
 class Connection(Base):
-    """データ接続。ソースごとに1行で、紐づけを外すと消す。紐づけ先（URL）は sites に持つ。
+    """データ接続。ソースごとに1行で、この行があれば紐づけている。紐づけを外すと消す。
 
+    target は紐づけ先（Search Console・Bing のサイトの URL。GA4 はサイトのプロパティ ID を使うので空）。
     Google（GA4・Search Console）は、どの利用者の更新トークンで API を呼ぶかを持つ。
-    Bing は、どのキーで API を呼ぶかを持つ。
+    Bing は、どのキーで API を呼ぶかを持つ（使っているキーは消せない）。
     """
 
     __tablename__ = "connections"
-    __table_args__ = (UniqueConstraint("site_id", "source"),)
+    __table_args__ = (
+        UniqueConstraint("site_id", "source"),
+        CheckConstraint("source = 'ga4' OR target IS NOT NULL", name="ck_connections_target"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"))
     source: Mapped[str] = mapped_column(String(16))  # ga4 / gsc / bing
     auth_method: Mapped[str] = mapped_column(String(16))  # google / api_key
+    target: Mapped[str | None] = mapped_column(Text)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    bing_key_id: Mapped[int | None] = mapped_column(ForeignKey("bing_keys.id"))
+    bing_key_id: Mapped[int | None] = mapped_column(ForeignKey("bing_keys.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -119,6 +137,8 @@ class SyncRun(Base):
     site_id: Mapped[int] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"), index=True)
     source: Mapped[str] = mapped_column(String(16))  # gsc / bing
     table_name: Mapped[str] = mapped_column(String(64))
+    # 取った先（Search Console・Bing のサイトの URL）。紐づけ先を変えたら、前の先の数字を消して取り直すのに使う
+    target: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)
     end_date: Mapped[date | None] = mapped_column(Date)
     rows: Mapped[int] = mapped_column(Integer, default=0)

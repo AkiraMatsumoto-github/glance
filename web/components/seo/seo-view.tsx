@@ -15,7 +15,7 @@ import {
   formatMetric,
   formatMetricAxis,
   metricValue,
-} from "@/components/seo/metrics";
+} from "@/lib/seo-metrics";
 import { IndexSection } from "@/components/seo/index-section";
 import { RankingTable } from "@/components/seo/ranking-table";
 import { SeoCards } from "@/components/seo/seo-cards";

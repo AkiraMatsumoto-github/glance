@@ -6,12 +6,19 @@
 
 import random
 from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Any, Literal
+from datetime import date
+from typing import Any
 
-from glance.seo.periods import PERIOD_LABELS, CompareName, PeriodName, Range, resolve_compare, resolve_period
-
-Engine = Literal["google", "bing"]
+from glance.seo.periods import (
+    PERIOD_LABELS,
+    CompareName,
+    Engine,
+    PeriodName,
+    Range,
+    default_data_until,
+    resolve_compare,
+    resolve_period,
+)
 
 TOP = 100  # クエリ・ページは、サイトごとに多い順に100件まで返す
 
@@ -56,15 +63,6 @@ _PAGE_FORMS = [
     ("{t}の最新動向まとめ", "/news/{s}-trend"),
     ("{t}のツール比較", "/tools/{s}"),
 ]
-
-
-def data_until(engine: Engine, today: date) -> date:
-    # GSC は確定まで2〜3日、Bing は前日まで（本物は取得ログから出す）
-    return today - timedelta(days=3 if engine == "google" else 1)
-
-
-def _days(r: Range) -> list[date]:
-    return [r.start + timedelta(days=i) for i in range(r.days)]
 
 
 def _daily(site: DemoSite, engine: Engine, d: date) -> dict[str, Any]:
@@ -136,7 +134,7 @@ def _with_compare(current: list[dict[str, Any]], previous: list[dict[str, Any]] 
 
 def _crawl(site: DemoSite, r: Range) -> list[dict[str, Any]]:
     rows = []
-    for d in _days(r):
+    for d in r.dates():
         rng = random.Random(f"{site.site_id}:crawl:{d.isoformat()}")
         growth = 1 + 0.0008 * (d - date(2026, 1, 1)).days
         rows.append(
@@ -160,7 +158,7 @@ def _index(site: DemoSite, engine: Engine, r: Range, until: date) -> dict[str, A
     share = min(0.98, site.shown * (r.days / 28) ** 0.25)
     indexed = round(site.sitemap * share)
     daily = []
-    for d in _days(r):
+    for d in r.dates():
         rng = random.Random(f"{site.site_id}:index:{d.isoformat()}")
         week = 0.8 if d.weekday() >= 5 else 1.0
         daily.append({"date": d.isoformat(), "pages": round(site.sitemap * site.shown * 0.45 * week * rng.uniform(0.9, 1.1))})
@@ -176,14 +174,14 @@ def demo_seo(
     start: date | None = None,
     end: date | None = None,
 ) -> dict[str, Any]:
-    until = data_until(engine, today)
+    until = default_data_until(engine, today)
     current = resolve_period(period, until, start, end)
     previous = resolve_compare(compare, period, current)
     sites = []
     for site in SITES:
-        daily = [_daily(site, engine, d) for d in _days(current)]
+        daily = [_daily(site, engine, d) for d in current.dates()]
         totals = _totals(daily, engine)
-        compare_daily = [_daily(site, engine, d) for d in _days(previous)] if previous else None
+        compare_daily = [_daily(site, engine, d) for d in previous.dates()] if previous else None
         compare_totals = _totals(compare_daily, engine) if compare_daily is not None else None
         pages = _items(site, engine, "page", current, totals["clicks"])
         pages_before = _items(site, engine, "page", previous, compare_totals["clicks"]) if previous and compare_totals else None

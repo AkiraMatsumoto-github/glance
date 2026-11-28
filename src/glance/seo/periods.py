@@ -1,4 +1,4 @@
-"""SEO の画面の期間と比べる期間（screen_design.md §7、api_design.md §1 の period・compare と同じ解釈）。
+"""SEO の画面の検索エンジン・期間・比べる期間（screen_design.md §7、api_design.md §1 の period・compare と同じ解釈）。
 
 期間の終わりは、そのソースのデータがある最終日（data_until）まで。デモと本物で共通に使う。
 """
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
+Engine = Literal["google", "bing"]
 PeriodName = Literal["last_7_days", "last_28_days", "this_month", "last_month", "custom"]
 CompareName = Literal["previous_period", "previous_year", "none"]
 
@@ -31,6 +32,17 @@ class Range:
     @property
     def days(self) -> int:
         return (self.end - self.start).days + 1
+
+    def dates(self) -> list[date]:
+        return [self.start + timedelta(days=i) for i in range(self.days)]
+
+
+def default_data_until(engine: Engine, today: date) -> date:
+    """データがある最終日の既定。GSC は確定まで2〜3日、Bing は前日まで。
+
+    デモはいつもこれを使う。本物は取り込んだ数字の最終日を使い、まだ何も無いときだけこれを使う。
+    """
+    return today - timedelta(days=3 if engine == "google" else 1)
 
 
 def _month_start(d: date) -> date:

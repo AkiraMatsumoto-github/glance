@@ -2,12 +2,14 @@
 
 Search Console に登録したサイトマップ（sitemaps.list）から始め、サイトマップの索引（sitemapindex）は中のサイトマップを
 たどる。.gz にも対応する。読みすぎないよう、ファイル数・URL 数・1ファイルの大きさに上限を置く。
+紐づけたサイトのドメインの外（ほかのサイトや、サーバーの内側の住所）は読まない。転送先も1回ずつ確かめる。
 """
 
 import gzip
 import io
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Protocol
+from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
 import httpx
@@ -17,46 +19,78 @@ from glance.sync.values import page_path
 MAX_FILES = 500
 MAX_URLS = 200_000
 MAX_BYTES = 50 * 1024 * 1024  # 1ファイル（サイトマップの決まりの上限）
+MAX_REDIRECTS = 5
 USER_AGENT = "Mozilla/5.0 (compatible; Glance/1.0; sitemap)"
 
 
+def site_domain(site_url: str) -> str:
+    """紐づけた Search Console のサイトのドメイン（sc-domain:example.com・https://www.example.com/ → example.com）。"""
+    host = site_url.removeprefix("sc-domain:") if site_url.startswith("sc-domain:") else urlsplit(site_url).hostname or ""
+    return host.lower().removeprefix("www.")
+
+
+def within(url: str, domain: str) -> bool:
+    """http(s) で、ホストがそのドメインか、そのサブドメインか。"""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme in ("http", "https") and bool(domain) and (host == domain or host.endswith("." + domain))
+
+
 class SitemapFetcher(Protocol):
-    async def fetch(self, url: str) -> bytes: ...
+    async def fetch(self, url: str, allowed: Callable[[str], bool]) -> bytes:
+        """url を読む。転送されたら、転送先が allowed のときだけ続ける。"""
+        ...
 
 
 class HttpSitemapFetcher:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
 
-    async def fetch(self, url: str) -> bytes:
+    async def fetch(self, url: str, allowed: Callable[[str], bool]) -> bytes:
         async with httpx.AsyncClient(
-            timeout=30, follow_redirects=True, transport=self._transport, headers={"User-Agent": USER_AGENT}
+            timeout=30, follow_redirects=False, transport=self._transport, headers={"User-Agent": USER_AGENT}
         ) as http:
-            async with http.stream("GET", url) as response:
-                response.raise_for_status()
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > MAX_BYTES:
-                        raise ValueError(f"サイトマップが大きすぎます: {url}")
-                return bytes(body)
+            for _ in range(MAX_REDIRECTS + 1):
+                async with http.stream("GET", url) as response:
+                    if response.is_redirect:
+                        url = urljoin(url, response.headers["location"])
+                        if not allowed(url):
+                            raise ValueError(f"サイトの外へ転送されました: {url}")
+                        continue
+                    response.raise_for_status()
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_BYTES:
+                            raise ValueError(f"サイトマップが大きすぎます: {url}")
+                    return bytes(body)
+        raise ValueError(f"転送が多すぎます: {url}")
 
 
 def _name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]  # 名前空間（{http://www.sitemaps.org/...}）を外す
 
 
-async def sitemap_paths(fetcher: SitemapFetcher, sitemaps: Iterable[str]) -> set[str]:
-    """サイトマップに載っているページのパス。索引（sitemapindex）は中をたどる。"""
+async def sitemap_paths(fetcher: SitemapFetcher, sitemaps: Iterable[str], site_url: str) -> set[str]:
+    """サイトマップに載っているページのパス。索引（sitemapindex）は中をたどる。
+
+    site_url（紐づけた Search Console のサイト）のドメインの外のサイトマップは読まない。1つも読めなければ失敗にする
+    （サイトマップの URL を空で入れ替えないため）。
+    """
+    domain = site_domain(site_url)
+
+    def allowed(url: str) -> bool:
+        return within(url, domain)
+
     queue, seen, paths = list(sitemaps), set[str](), set[str]()
     while queue:
         url = queue.pop(0)
-        if url in seen:
+        if url in seen or not allowed(url):
             continue
         seen.add(url)
         if len(seen) > MAX_FILES:
             raise ValueError(f"サイトマップのファイルが {MAX_FILES} を超えました")
-        body = await fetcher.fetch(url)
+        body = await fetcher.fetch(url, allowed)
         if body[:2] == b"\x1f\x8b":  # .gz。展開した後の大きさにも上限を置く
             body = gzip.GzipFile(fileobj=io.BytesIO(body)).read(MAX_BYTES + 1)
             if len(body) > MAX_BYTES:
@@ -69,6 +103,8 @@ async def sitemap_paths(fetcher: SitemapFetcher, sitemaps: Iterable[str]) -> set
             paths.update(page_path(loc) for loc in locs)
         if len(paths) > MAX_URLS:
             raise ValueError(f"サイトマップの URL が {MAX_URLS} を超えました")
+    if not seen:
+        raise ValueError(f"{domain} の中にあるサイトマップがありません（サイトの外にあるサイトマップは読みません）")
     return paths
 
 
@@ -78,7 +114,7 @@ FAKE_PAGES = ["/", "/glossary/wms/", "/news/2024-problem/", "/tools/%E5%80%89%E5
 
 
 class FakeSitemapFetcher:
-    async def fetch(self, url: str) -> bytes:
+    async def fetch(self, url: str, allowed: Callable[[str], bool]) -> bytes:
         base = url.rsplit("/", 1)[0]
         ns = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
         if url.endswith("sitemap_index.xml"):

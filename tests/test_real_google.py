@@ -10,8 +10,8 @@ from google.api_core import exceptions as api_errors
 from google.auth.exceptions import RefreshError
 
 from glance.auth.crypto import TokenCipher
-from glance.google.ga4 import Ga4PermissionDenied, Ga4QuotaExceeded, GscApiDisabled, ReauthRequired
-from glance.google.real import RealGa4Client
+from glance.google.client import GooglePermissionDenied, GoogleQuotaExceeded, GoogleUnavailable, GscApiDisabled, ReauthRequired
+from glance.google.real import RealGoogleClient
 
 
 class ValidCredentials:
@@ -46,8 +46,8 @@ class DataStub:
         return self.result
 
 
-def client(data: Any = None, admin: Any = None, credentials: Any = None) -> RealGa4Client:
-    return RealGa4Client(credentials or ValidCredentials(), data_client=data or DataStub(None), admin_client=admin or object())  # type: ignore[arg-type]
+def client(data: Any = None, admin: Any = None, credentials: Any = None) -> RealGoogleClient:
+    return RealGoogleClient(credentials or ValidCredentials(), data_client=data or DataStub(None), admin_client=admin or object())  # type: ignore[arg-type]
 
 
 async def test_totals() -> None:
@@ -99,9 +99,9 @@ async def test_events_by_count() -> None:
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
-        (api_errors.PermissionDenied("no"), Ga4PermissionDenied),
-        (api_errors.NotFound("no"), Ga4PermissionDenied),
-        (api_errors.ResourceExhausted("quota"), Ga4QuotaExceeded),
+        (api_errors.PermissionDenied("no"), GooglePermissionDenied),
+        (api_errors.NotFound("no"), GooglePermissionDenied),
+        (api_errors.ResourceExhausted("quota"), GoogleQuotaExceeded),
         (api_errors.Unauthenticated("expired"), ReauthRequired),
     ],
 )
@@ -185,8 +185,8 @@ class TokenCredentials(ValidCredentials):
     token = "access-token"
 
 
-def gsc_client(handler: Any) -> RealGa4Client:
-    return RealGa4Client(
+def gsc_client(handler: Any) -> RealGoogleClient:
+    return RealGoogleClient(
         TokenCredentials(),  # type: ignore[arg-type]
         data_client=DataStub(None),
         admin_client=object(),
@@ -218,11 +218,20 @@ async def test_list_gsc_sites() -> None:
         (403, {"error": {"status": "PERMISSION_DENIED", "details": [{"reason": "SERVICE_DISABLED"}]}}, GscApiDisabled),
         (403, {"error": {"message": "Request had insufficient authentication scopes."}}, ReauthRequired),
         (401, {}, ReauthRequired),
-        (403, {"error": {"message": "User does not have sufficient permission"}}, Ga4PermissionDenied),
-        (403, {"error": {"message": "Quota exceeded", "errors": [{"reason": "rateLimitExceeded"}]}}, Ga4QuotaExceeded),
-        (429, {"error": {"message": "Quota exceeded for quota metric"}}, Ga4QuotaExceeded),
+        (403, {"error": {"message": "User does not have sufficient permission"}}, GooglePermissionDenied),
+        (403, {"error": {"message": "Quota exceeded", "errors": [{"reason": "rateLimitExceeded"}]}}, GoogleQuotaExceeded),
+        (429, {"error": {"message": "Quota exceeded for quota metric"}}, GoogleQuotaExceeded),
+        (503, {"error": {"message": "Backend Error"}}, GoogleUnavailable),
     ],
 )
 async def test_list_gsc_sites_errors(status: int, body: dict, error: type[Exception]) -> None:
     with pytest.raises(error):
         await gsc_client(lambda _r: httpx.Response(status, json=body)).list_gsc_sites()
+
+
+async def test_list_gsc_sites_network_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    with pytest.raises(GoogleUnavailable, match="ConnectTimeout"):
+        await gsc_client(handler).list_gsc_sites()

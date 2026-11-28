@@ -12,10 +12,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.engine import make_url
 
-from glance.bing import BingClient, FakeBingClient
+from glance.bing.client import BingClient, FakeBingClient
 from glance.config import Settings
-from glance.google.fake import FakeGa4Client
-from glance.google.ga4 import Ga4Client
+from glance.google.fake import FakeGoogleClient
+from glance.google.client import GoogleClient
 from glance.main import create_app
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,9 +63,9 @@ def make_settings(database_url: str, **overrides: object) -> Settings:
 
 
 @pytest.fixture
-def ga4() -> Ga4Client:
+def google() -> GoogleClient:
     """テストで差し替える GA4 クライアント。既定は待ち時間のないフェイク。"""
-    return FakeGa4Client(latency=(0, 0), clock=lambda: 1_800_000_000.0)
+    return FakeGoogleClient(latency=(0, 0), clock=lambda: 1_800_000_000.0)
 
 
 @pytest.fixture
@@ -75,10 +75,10 @@ def bing() -> BingClient:
 
 
 @pytest.fixture
-async def app(database_url: str, ga4: Ga4Client, bing: BingClient) -> AsyncIterator[FastAPI]:
+async def app(database_url: str, google: GoogleClient, bing: BingClient) -> AsyncIterator[FastAPI]:
     _clean(database_url)
     application = create_app(
-        make_settings(database_url), ga4_factory=lambda _user: ga4, realtime_timeout=0.5, bing_client=bing
+        make_settings(database_url), google_factory=lambda _user: google, realtime_timeout=0.5, bing_client=bing
     )
     yield application
     await application.state.engine.dispose()

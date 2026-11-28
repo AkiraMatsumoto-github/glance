@@ -30,25 +30,28 @@ type DialogProps = {
   onSaved: () => void; // 保存したら一覧を読み直す
 };
 
-// 一覧を取る。url が null のあいだは取らない（取った url ごとに覚え、url が変われば取り直す）
-function useData<T>(url: string | null) {
-  const [result, setResult] = useState<{ url: string; data?: T; error?: string } | null>(null);
+// 一覧を取る。url が null のあいだは取らない。url か reload が変われば取り直す
+// （reload は、同じ url でも取り直したいとき（キーを入れ直したときなど）に増やす）
+function useData<T>(url: string | null, reload = 0) {
+  const request = url === null ? null : `${url}#${reload}`;
+  const [result, setResult] = useState<{ request: string; data?: T; error?: string } | null>(null);
   useEffect(() => {
     if (url === null) return;
+    const key = `${url}#${reload}`;
     let cancelled = false;
     api<T>(url).then(
       (data) => {
-        if (!cancelled) setResult({ url, data });
+        if (!cancelled) setResult({ request: key, data });
       },
       (e: unknown) => {
-        if (!cancelled) setResult({ url, error: errorMessage(e) });
+        if (!cancelled) setResult({ request: key, error: errorMessage(e) });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [url]);
-  return result !== null && result.url === url ? result : null;
+  }, [url, reload]);
+  return result !== null && result.request === request ? result : null;
 }
 
 // 保存の送信。送っている間はボタンを押せなくし、失敗したら理由を出す
@@ -243,9 +246,14 @@ function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: 
   const [picked, setPicked] = useState<number | typeof NEW_KEY | null>(null);
   const [pickedSite, setPickedSite] = useState<string | null>(null);
   const [rekeying, setRekeying] = useState(false);
+  // キーを保存・入れ直したら、そのキーで見られるサイトを取り直す（入れ直しは同じ url なので、印を増やす）
+  const [sitesReload, setSitesReload] = useState(0);
   const keys = loadedKeys?.data ? [...loadedKeys.data.filter((k) => !added.some((a) => a.id === k.id)), ...added] : null;
   const keyChoice = picked ?? site.links.bing_key_id ?? keys?.[0]?.id ?? NEW_KEY;
-  const loadedSites = useData<string[]>(keys && keyChoice !== NEW_KEY ? `${base}/bing/keys/${keyChoice}/sites` : null);
+  const loadedSites = useData<string[]>(
+    keys && keyChoice !== NEW_KEY ? `${base}/bing/keys/${keyChoice}/sites` : null,
+    sitesReload,
+  );
   const sites = loadedSites?.data ?? null;
   const current = keyChoice === site.links.bing_key_id ? site.links.bing_site_url : null;
   const siteValue = pickedSite !== null && (pickedSite === NONE || sites?.includes(pickedSite)) ? pickedSite : (current ?? NONE);
@@ -259,6 +267,7 @@ function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: 
     setPicked(key.id);
     setPickedSite(null);
     setRekeying(false);
+    setSitesReload((n) => n + 1);
   }
 
   if (!loadedKeys) return <p className="text-ink-3">読み込み中…</p>;

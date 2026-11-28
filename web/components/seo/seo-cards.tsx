@@ -1,6 +1,6 @@
 "use client";
 
-import { addTotals, ctr, formatChange, formatMetric } from "@/components/seo/metrics";
+import { addTotals, ctr, formatChange, formatMetric } from "@/lib/seo-metrics";
 import { CARD_CLICKABLE, Stat, Toggle } from "@/components/selectable-card";
 import { formatCompact, formatNumber } from "@/lib/format";
 import type { SeoEngine, SeoSite } from "@/lib/types";

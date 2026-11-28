@@ -24,6 +24,7 @@ dev = [
     "pytest>=9.2",
     "pytest-asyncio>=1.5",
     "httpx>=0.28",
+    "playwright>=1.65.2",
 ]
 
 [build-system]

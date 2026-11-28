@@ -6,9 +6,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.engine import make_url
 
-from glance.bing import BingKeyInvalid, BingUnavailable, FakeBingClient, RealBingClient
-from glance.google.fake import FakeGa4Client
-from glance.google.ga4 import GscApiDisabled
+from glance.bing.client import BingKeyInvalid, BingUnavailable, FakeBingClient, RealBingClient
+from glance.google.fake import FakeGoogleClient
+from glance.google.client import GoogleQuotaExceeded, GoogleUnavailable, GscApiDisabled
 from glance.sites.links import match_gsc_site
 
 JSON = {"content-type": "application/json"}
@@ -90,12 +90,12 @@ async def test_link_and_unlink_gsc(logged_in: AsyncClient, database_url: str) ->
     assert _query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(0,)]
 
 
-class GscDisabled(FakeGa4Client):
+class GscDisabled(FakeGoogleClient):
     async def list_gsc_sites(self) -> list[str]:
         raise GscApiDisabled()
 
 
-@pytest.mark.parametrize("ga4", [GscDisabled(latency=(0, 0))])
+@pytest.mark.parametrize("google", [GscDisabled(latency=(0, 0))])
 async def test_gsc_api_disabled(logged_in: AsyncClient) -> None:
     # GA4 のプロパティの追加はできる。Search Console を選ぶところで、有効にするよう伝える
     props = [p for a in (await logged_in.get("/api/ga4/properties")).json() for p in a["properties"]]
@@ -215,3 +215,30 @@ async def test_real_bing_client_hides_key_on_network_error() -> None:
     # 元の例外（キーを含む URL を持つ）をつなげない
     assert info.value.__cause__ is None
     assert info.value.__suppress_context__ is True
+
+
+class GscFlaky(FakeGoogleClient):
+    """Search Console が上限・落ちている。"""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(latency=(0, 0))
+        self.error = error
+
+    async def list_gsc_sites(self) -> list[str]:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("google", "status", "code"),
+    [
+        (GscFlaky(GoogleQuotaExceeded("Quota exceeded")), 429, "gsc_quota"),
+        (GscFlaky(GoogleUnavailable("503: Backend Error")), 502, "gsc_unavailable"),
+    ],
+)
+async def test_gsc_trouble_still_lets_sites_be_added(logged_in: AsyncClient, status: int, code: str) -> None:
+    # 「サイトを追加」は開ける（Search Console の選択は出さない）。紐づけのダイアログは理由を出す
+    props = [p for a in (await logged_in.get("/api/ga4/properties")).json() for p in a["properties"]]
+    assert props and all(p["search_console"] is None for p in props)
+    site = await add(logged_in, "900000001")
+    response = await logged_in.get(f"/api/sites/{site['id']}/gsc")
+    assert (response.status_code, response.json()["code"]) == (status, code)

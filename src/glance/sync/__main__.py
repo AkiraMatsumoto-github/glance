@@ -14,10 +14,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from glance.auth.crypto import TokenCipher
-from glance.bing import FakeBingClient, RealBingClient
+from glance.bing.client import FakeBingClient, RealBingClient
 from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
-from glance.google.factory import default_ga4_factory
+from glance.google.factory import default_google_factory
 from glance.sync.runner import Outcome, Syncer
 from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher
 
@@ -41,7 +41,7 @@ async def main(argv: list[str]) -> int:
     cipher = TokenCipher(settings.token_key) if settings.token_key else None
     syncer = Syncer(
         create_sessionmaker(engine),
-        default_ga4_factory(settings, cipher),
+        default_google_factory(settings, cipher),
         FakeBingClient() if settings.fake_google else RealBingClient(),
         cipher,
         today=datetime.now(JST).date(),

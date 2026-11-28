@@ -4,7 +4,12 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 
 ## 手元で動かす
 
-今できているのは1番目の段階（リアルタイム画面）。Google でログインし、GA4 のリアルタイムの数字を出す。Google を使わずにダミーの数字で動かすこともできる（フェイクモード。[technical_design.md](docs/01_design/technical_design.md) §11）。
+今できているのは次のとおり（[roadmap.md](docs/01_design/roadmap.md) §1）。Google・Bing を使わずにダミーの数字で動かすこともできる（フェイクモード。[technical_design.md](docs/01_design/technical_design.md) §11）。
+
+- リアルタイム: Google でログインし、GA4 のリアルタイムの数字を出す
+- SEO: Search Console・Bing から取り込んだ数字（合計・日ごとの推移・インデックス・クエリ・ページ）
+- サイト設定: GA4 のプロパティの追加と、Search Console・Bing の連携
+- デモ: ログインせずに、ダミーの数字で上の画面を見る（`/demo`）
 
 1. `.env.example` を `.env` に写し、値を入れる。
    - `GLANCE_DB_PASSWORD`: 手元で決めた長いランダムな文字列
@@ -29,8 +34,16 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
    ```
 
 4. http://localhost:3100 を開き、「Google でログイン」→「サイト設定」で GA4 のプロパティを追加 →「リアルタイム」。
+5. Search Console・Bing の数字を見るときは、「サイト設定」で連携してから取り込む（VPS に出すまでは手元で、数週間に1回は動かす。Bing は古い日から消えていくため）。
+
+   ```bash
+   uv run python -m glance.sync                 # 連携した全サイトの Search Console と Bing
+   uv run python -m glance.sync --source bing   # Bing だけ（--site <サイト ID> で絞れる）
+   ```
 
 **テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`
+
+**画面の自動テスト**（ブラウザで動かす。ふだんの `uv run pytest` では飛ばす）: `cd web && npm run build` で画面を書き出してから、`GLANCE_E2E=1 uv run pytest tests/e2e`。ブラウザは `uv run playwright install chromium` で入れる（別の場所のものを使うときは `GLANCE_E2E_CHROMIUM` に実行ファイルのパス）
 
 **本番と同じ形で見る**: `cd web && npm run build` で `web/out` に書き出すと、API（8101）が画面も出す。http://127.0.0.1:8101 を開く。
 

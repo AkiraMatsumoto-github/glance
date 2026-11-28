@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from glance.google.ga4 import BreakdownRow, EventRow, Ga4Client, Ga4PermissionDenied, Ga4QuotaExceeded, ReauthRequired, Totals
+from glance.google.client import BreakdownRow, EventRow, GoogleClient, GooglePermissionDenied, GoogleQuotaExceeded, ReauthRequired, Totals
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def _breakdown(rows: list[BreakdownRow]) -> list[dict[str, Any]]:
     return [{"key": r.key, "active_users": r.active_users} for r in rows]
 
 
-async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> dict[str, Any]:
+async def _fetch_site(client: GoogleClient, target: SiteTarget, timeout: float) -> dict[str, Any]:
     base = {"site_id": target.site_id, "name": target.name}
     try:
         async with asyncio.timeout(timeout):
@@ -58,9 +58,9 @@ async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> 
         raise
     except TimeoutError:
         return {**base, "status": "error", "error": "timeout"}
-    except Ga4PermissionDenied:
+    except GooglePermissionDenied:
         return {**base, "status": "error", "error": "permission_denied"}
-    except Ga4QuotaExceeded:
+    except GoogleQuotaExceeded:
         return {**base, "status": "error", "error": "quota"}
     except Exception:
         log.exception("リアルタイムを取れなかった: site_id=%s", target.site_id)
@@ -93,7 +93,7 @@ async def _fetch_site(client: Ga4Client, target: SiteTarget, timeout: float) -> 
 
 
 async def fetch_realtime(
-    client: Ga4Client,
+    client: GoogleClient,
     targets: list[SiteTarget],
     timeout: float = SITE_TIMEOUT_SECONDS,
     now: datetime | None = None,

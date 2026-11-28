@@ -17,13 +17,14 @@ from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 
 from glance.auth.google import SCOPES, TOKEN_URI
-from glance.google.ga4 import (
+from glance.google.client import (
     AccountSummary,
     BreakdownDimension,
     BreakdownRow,
     EventRow,
-    Ga4PermissionDenied,
-    Ga4QuotaExceeded,
+    GooglePermissionDenied,
+    GoogleQuotaExceeded,
+    GoogleUnavailable,
     GscApiDisabled,
     GscRow,
     MinuteRow,
@@ -54,7 +55,7 @@ def _int(value: str) -> int:
     return int(float(value or 0))
 
 
-class RealGa4Client:
+class RealGoogleClient:
     def __init__(
         self,
         credentials: Credentials,
@@ -86,9 +87,9 @@ class RealGa4Client:
         except api_errors.Unauthenticated as e:
             raise ReauthRequired() from e
         except (api_errors.PermissionDenied, api_errors.NotFound) as e:
-            raise Ga4PermissionDenied() from e
+            raise GooglePermissionDenied() from e
         except api_errors.ResourceExhausted as e:
-            raise Ga4QuotaExceeded() from e
+            raise GoogleQuotaExceeded() from e
 
     # Admin API
 
@@ -135,10 +136,13 @@ class RealGa4Client:
 
     async def _gsc(self, method: str, url: str, body: dict[str, Any] | None = None) -> Any:
         await self._ensure_token()
-        async with httpx.AsyncClient(timeout=60, transport=self._gsc_transport) as http:
-            response = await http.request(
-                method, url, json=body, headers={"Authorization": f"Bearer {self._credentials.token}"}
-            )
+        try:
+            async with httpx.AsyncClient(timeout=60, transport=self._gsc_transport) as http:
+                response = await http.request(
+                    method, url, json=body, headers={"Authorization": f"Bearer {self._credentials.token}"}
+                )
+        except httpx.HTTPError as e:
+            raise GoogleUnavailable(f"{type(e).__name__}: {e}") from e
         if response.status_code < 400:
             return response.json()
         text = response.text
@@ -152,16 +156,15 @@ class RealGa4Client:
         if response.status_code == 429 or any(
             word in text for word in ("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED")
         ):
-            raise Ga4QuotaExceeded(message)
+            raise GoogleQuotaExceeded(message)
         if response.status_code == 403:
             if "SERVICE_DISABLED" in text or "accessNotConfigured" in text:
                 raise GscApiDisabled(message)
             if "insufficient" in text.lower():
                 # Search Console を読む許可をもらっていない。ログインし直して許可してもらう
                 raise ReauthRequired()
-            raise Ga4PermissionDenied(message)
-        response.raise_for_status()
-        return response.json()
+            raise GooglePermissionDenied(message)
+        raise GoogleUnavailable(f"{response.status_code}: {message}")
 
     async def list_gsc_sites(self) -> list[str]:
         entries = (await self._gsc("GET", GSC_SITES_URL)).get("siteEntry", [])

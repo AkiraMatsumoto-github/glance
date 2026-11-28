@@ -8,16 +8,17 @@
 - index（インデックスの目安）。サイトマップの URL 数と、Google は期間中に検索に出たページ（imp 1回以上）、Bing はインデックス数。
 """
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
-from sqlalchemy import and_, func, null, select
+from sqlalchemy import and_, case, func, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from glance.db.models import (
     BingCrawlDaily,
     BingPageWeekly,
     BingSiteDaily,
+    Connection,
     GscPage,
     GscQueryPage,
     GscSite,
@@ -25,14 +26,18 @@ from glance.db.models import (
     SitemapUrl,
     SyncRun,
 )
-from glance.seo.demo import Engine, data_until
-from glance.seo.periods import PERIOD_LABELS, CompareName, PeriodName, Range, resolve_compare, resolve_period
+from glance.seo.periods import (
+    PERIOD_LABELS,
+    CompareName,
+    Engine,
+    PeriodName,
+    Range,
+    default_data_until,
+    resolve_compare,
+    resolve_period,
+)
 
 TOP = 100  # クエリ・ページは、サイトごとにクリックの多い順に100件まで（デモと同じ）
-
-
-def _days(r: Range) -> list[date]:
-    return [r.start + timedelta(days=i) for i in range(r.days)]
 
 
 def _position(weighted: float | None, impressions: int) -> float | None:
@@ -62,7 +67,7 @@ async def _daily(db: AsyncSession, engine: Engine, site_ids: list[int], r: Range
 def _daily_rows(found: dict[date, dict[str, Any]], r: Range, engine: Engine) -> list[dict[str, Any]]:
     # 期間の全部の日を並べる（数字のない日は 0）。比べる期間と、何日目かでそろえるため
     rows = []
-    for day in _days(r):
+    for day in r.dates():
         value = found.get(day, {"clicks": 0, "impressions": 0, "weighted": None})
         rows.append(
             {
@@ -92,9 +97,12 @@ async def _ranking(
         key = model.query if kind == "query" else model.page  # type: ignore[attr-defined]
         day = model.date
         weighted = func.sum(model.position_weighted)
+        weight = func.sum(model.impressions)
     else:
         model, key, day = BingPageWeekly, BingPageWeekly.page, BingPageWeekly.week
         weighted = func.sum(BingPageWeekly.position * BingPageWeekly.impressions)
+        # 順位が分からない週の表示回数は、平均の重みに入れない（入れると順位が良く出すぎる）
+        weight = func.sum(case((BingPageWeekly.position.is_not(None), BingPageWeekly.impressions), else_=0))
 
     def in_range(r: Range) -> Any:
         return (model.site_id == site_id) & day.between(r.start, r.end)
@@ -102,7 +110,7 @@ async def _ranking(
     clicks, impressions = func.sum(model.clicks), func.sum(model.impressions)
     top = (
         await db.execute(
-            select(key, clicks, impressions, weighted)
+            select(key, clicks, impressions, weighted, weight)
             .where(in_range(current))
             .group_by(key)
             .order_by(clicks.desc(), impressions.desc(), key)
@@ -115,11 +123,11 @@ async def _ranking(
         rows = await db.execute(select(key, clicks).where(in_range(previous), key.in_(names)).group_by(key))
         before = {name: int(value) for name, value in rows}
     result = []
-    for name, c, i, w in top:
+    for name, c, i, w, n in top:
         row: dict[str, Any] = {
             "clicks": int(c),
             "impressions": int(i),
-            "position": _position(float(w) if w is not None else None, int(i)),
+            "position": _position(float(w) if w is not None else None, int(n or 0)),
             "compare_clicks": before.get(name, 0) if previous is not None and compare_has_data else None,
         }
         if kind == "query":
@@ -145,7 +153,7 @@ async def _crawl(db: AsyncSession, site_id: int, r: Range) -> list[dict[str, Any
             "indexed": found[day].indexed if day in found else None,
             "errors": found[day].crawl_errors if day in found else None,
         }
-        for day in _days(r)
+        for day in r.dates()
     ]
 
 
@@ -189,7 +197,7 @@ async def _index(db: AsyncSession, engine: Engine, site_id: int, r: Range) -> di
         # サイトマップをまだ読めていなければ、サイトマップにあるかは分からない
         "indexed": await db.scalar(select(pages).where(shown, GscPage.page.in_(in_sitemap))) if checked else None,
         "pages_shown": await db.scalar(select(pages).where(shown)) or 0,  # サイトマップに無いページも含めた数
-        "daily": [{"date": day.isoformat(), "pages": daily.get(day, 0)} for day in _days(r)],
+        "daily": [{"date": day.isoformat(), "pages": daily.get(day, 0)} for day in r.dates()],
     }
 
 
@@ -203,10 +211,14 @@ async def seo_report(
     start: date | None = None,
     end: date | None = None,
 ) -> dict[str, Any]:
-    linked = Site.gsc_site_url if engine == "google" else Site.bing_site_url
+    # 出すのは、その検索エンジンを紐づけた（接続設定の行がある）サイトだけ
+    source = "gsc" if engine == "google" else "bing"
     sites = list(
         await db.scalars(
-            select(Site).where(Site.tenant_id == tenant_id, linked.is_not(None)).order_by(Site.sort_order, Site.id)
+            select(Site)
+            .join(Connection, (Connection.site_id == Site.id) & (Connection.source == source))
+            .where(Site.tenant_id == tenant_id)
+            .order_by(Site.sort_order, Site.id)
         )
     )
     site_ids = [s.id for s in sites]
@@ -214,7 +226,7 @@ async def seo_report(
     latest = (
         await db.scalar(select(func.max(daily_model.date)).where(daily_model.site_id.in_(site_ids))) if site_ids else None
     )
-    current = resolve_period(period, latest or data_until(engine, today), start, end)
+    current = resolve_period(period, latest or default_data_until(engine, today), start, end)
     previous = resolve_compare(compare, period, current)
     daily = await _daily(db, engine, site_ids, current) if site_ids else {}
     before = await _daily(db, engine, site_ids, previous) if site_ids and previous else {}

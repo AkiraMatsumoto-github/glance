@@ -11,12 +11,12 @@ import time
 from collections.abc import Callable
 from datetime import date
 
-from glance.google.ga4 import (
+from glance.google.client import (
     AccountSummary,
     BreakdownDimension,
     BreakdownRow,
     EventRow,
-    Ga4PermissionDenied,
+    GooglePermissionDenied,
     GscRow,
     MinuteRow,
     PageRow,
@@ -106,7 +106,7 @@ def _names() -> dict[str, tuple[str, int]]:
     return {pid: (name, rate) for pid, name, rate in _PROPERTIES}
 
 
-class FakeGa4Client:
+class FakeGoogleClient:
     def __init__(
         self,
         latency: tuple[float, float] = (0.1, 0.5),
@@ -123,7 +123,7 @@ class FakeGa4Client:
     def _property(self, property_id: str) -> tuple[str, int]:
         found = _names().get(property_id)
         if found is None:
-            raise Ga4PermissionDenied(property_id)
+            raise GooglePermissionDenied(property_id)
         return found
 
     async def list_account_summaries(self) -> list[AccountSummary]:

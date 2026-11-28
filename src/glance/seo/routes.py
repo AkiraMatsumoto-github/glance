@@ -11,8 +11,8 @@ from fastapi import APIRouter
 
 from glance.auth.deps import CurrentUser, Db
 from glance.errors import AppError
-from glance.seo.demo import Engine, demo_seo
-from glance.seo.periods import CompareName, PeriodError, PeriodName
+from glance.seo.demo import demo_seo
+from glance.seo.periods import CompareName, Engine, PeriodError, PeriodName
 from glance.seo.service import seo_report
 
 router = APIRouter(prefix="/api")

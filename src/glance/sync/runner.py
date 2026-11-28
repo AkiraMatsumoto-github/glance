@@ -11,7 +11,7 @@
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from glance.auth.crypto import TokenCipher
-from glance.bing import BingClient
+from glance.bing.client import BingClient
 from glance.db.models import (
     Base,
     BingCrawlDaily,
@@ -37,8 +37,8 @@ from glance.db.models import (
     SyncRun,
     User,
 )
-from glance.google.factory import Ga4Factory
-from glance.google.ga4 import Ga4Client, Ga4QuotaExceeded, GscRow
+from glance.google.factory import GoogleFactory
+from glance.google.client import GoogleClient, GoogleQuotaExceeded, GscRow
 from glance.sync.sitemap import SitemapFetcher, sitemap_paths
 from glance.sync.values import bing_date, country_code, device, page_path
 
@@ -182,7 +182,7 @@ class Syncer:
     def __init__(
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
-        ga4_factory: Ga4Factory,
+        google_factory: GoogleFactory,
         bing_client: BingClient,
         cipher: TokenCipher | None,
         today: date,
@@ -192,7 +192,7 @@ class Syncer:
     ) -> None:
         self._sessions = sessionmaker
         self._sitemaps = sitemap_fetcher
-        self._ga4_factory = ga4_factory
+        self._google_factory = google_factory
         self._bing = bing_client
         self._cipher = cipher
         self._today = today
@@ -200,31 +200,37 @@ class Syncer:
         self._gsc_slots = asyncio.Semaphore(GSC_CONCURRENCY)
 
     async def run(self, sources: set[str], site_ids: list[int] | None = None) -> list[Outcome]:
+        """紐づけた（接続設定の行がある）サイト・ソースを取る。1つが落ちても、ほかは続ける。"""
         async with self._sessions() as db:
-            query = select(Site).order_by(Site.sort_order, Site.id)
+            query = (
+                select(Site, Connection)
+                .join(Connection, Connection.site_id == Site.id)
+                .where(Connection.source.in_(sources & {"gsc", "bing"}))
+                .order_by(Site.sort_order, Site.id, Connection.source)
+            )
             if site_ids:
                 query = query.where(Site.id.in_(site_ids))
-            sites = list(await db.scalars(query))
-            connections = {
-                (c.site_id, c.source): c
-                for c in await db.scalars(select(Connection).where(Connection.site_id.in_([s.id for s in sites])))
-            }
-        jobs: list[Awaitable[list[Outcome]]] = []
-        for site in sites:
-            if "gsc" in sources and site.gsc_site_url and (site.id, "gsc") in connections:
-                jobs.append(self._gsc(site, connections[(site.id, "gsc")]))
-            if "bing" in sources and site.bing_site_url and (site.id, "bing") in connections:
-                jobs.append(self._bing_site(site, connections[(site.id, "bing")]))
+            pairs = [(site, connection) for site, connection in await db.execute(query)]
+        jobs = [self._gsc(site, c) if c.source == "gsc" else self._bing_site(site, c) for site, c in pairs]
         # サイト・ソースごとに並べて取る（GSC の上限は、サイトと利用者ごとに1分1,200回）
-        results = await asyncio.gather(*jobs)
-        return [outcome for outcomes in results for outcome in outcomes]
+        results = await asyncio.gather(*jobs, return_exceptions=True)
+        outcomes: list[Outcome] = []
+        for (site, c), result in zip(pairs, results, strict=True):
+            if isinstance(result, BaseException):
+                # 取得ログも書けなかった（DB のエラーなど）。結果にだけ出す
+                failed = Outcome(site.name, c.source, "-", None, None, 0, _error(result))
+                self._report(failed)
+                outcomes.append(failed)
+            else:
+                outcomes.extend(result)
+        return outcomes
 
-    async def _log(self, site: Site, source: str, table: str, start: date | None, end: date | None,
-                   rows: int, error: str | None, started_at: datetime) -> Outcome:
+    async def _log(self, site: Site, source: str, table: str, target: str | None, start: date | None,
+                   end: date | None, rows: int, error: str | None, started_at: datetime) -> Outcome:
         async with self._sessions() as db:
             db.add(
-                SyncRun(site_id=site.id, source=source, table_name=table, start_date=start, end_date=end, rows=rows,
-                        ok=error is None, error=error, started_at=started_at)
+                SyncRun(site_id=site.id, source=source, table_name=table, target=target, start_date=start, end_date=end,
+                        rows=rows, ok=error is None, error=error, started_at=started_at)
             )
             await db.commit()
         outcome = Outcome(site.name, source, table, start, end, rows, error)
@@ -235,40 +241,41 @@ class Syncer:
 
     async def _gsc(self, site: Site, connection: Connection) -> list[Outcome]:
         started_at = datetime.now(UTC)
+        target = connection.target
+        assert target
         try:
             async with self._sessions() as db:
                 user = await db.get(User, connection.user_id) if connection.user_id else None
             if user is None:
                 raise RuntimeError("紐づけた利用者がいません。サイト設定で Search Console を紐づけ直してください")
-            client = self._ga4_factory(user)
+            client = self._google_factory(user)
         except Exception as e:  # noqa: BLE001 ログに残して、ほかのサイトは続ける
-            return [await self._log(site, "gsc", table, None, None, 0, _error(e), started_at) for table in GSC_TABLES]
-        outcomes = await asyncio.gather(*(self._gsc_table(site, client, table) for table in GSC_TABLES))
-        outcomes = list(outcomes)
+            return [await self._log(site, "gsc", table, target, None, None, 0, _error(e), started_at) for table in GSC_TABLES]
+        outcomes = list(await asyncio.gather(*(self._gsc_table(site, target, client, table) for table in GSC_TABLES)))
         query_run = next(o for o in outcomes if o.table == "gsc_query_page")
-        if query_run.start is not None and query_run.end is not None:
-            outcomes.append(await self._clean_queries(site, query_run.start, query_run.end))
-        outcomes.append(await self._sitemap(site, client))
+        # 途中で失敗した月は、月の数字がそろっていないので整理しない（次回、取り終えてから整理する）
+        if query_run.error is None and query_run.start is not None and query_run.end is not None:
+            outcomes.append(await self._clean_queries(site, target, query_run.start, query_run.end))
+        outcomes.append(await self._sitemap(site, target, client))
         return outcomes
 
-    async def _sitemap(self, site: Site, client: Ga4Client) -> Outcome:
-        """サイトマップの URL を入れ替える。読めなかったら前のままにする。"""
+    async def _sitemap(self, site: Site, target: str, client: GoogleClient) -> Outcome:
+        """サイトマップの URL を入れ替える。読めなかったら前のままにする。紐づけたサイトの外は読まない。"""
         started_at = datetime.now(UTC)
-        assert site.gsc_site_url
         try:
             async with self._gsc_slots:
-                sitemaps = await client.gsc_sitemaps(site.gsc_site_url)
+                sitemaps = await client.gsc_sitemaps(target)
             if not sitemaps:
                 raise RuntimeError("Search Console にサイトマップが登録されていません")
-            paths = sorted(await sitemap_paths(self._sitemaps, sitemaps))
+            paths = sorted(await sitemap_paths(self._sitemaps, sitemaps, target))
             async with self._sessions() as db:
                 await db.execute(delete(SitemapUrl).where(SitemapUrl.site_id == site.id))
                 for i in range(0, len(paths), CHUNK):
                     await db.execute(pg_insert(SitemapUrl), [{"site_id": site.id, "path": p} for p in paths[i : i + CHUNK]])
                 await db.commit()
         except Exception as e:  # noqa: BLE001
-            return await self._log(site, "gsc", "sitemap_urls", None, None, 0, _error(e), started_at)
-        return await self._log(site, "gsc", "sitemap_urls", self._today, self._today, len(paths), None, started_at)
+            return await self._log(site, "gsc", "sitemap_urls", target, None, None, 0, _error(e), started_at)
+        return await self._log(site, "gsc", "sitemap_urls", target, self._today, self._today, len(paths), None, started_at)
 
     async def _gsc_start(self, site_id: int, model: type[Base], table: str) -> date:
         """取得済みの最終日の3日前。数字のある最終日を使う（直近の確定していない日を取り直すため）。
@@ -284,33 +291,32 @@ class Syncer:
                 )
         return backfill if latest is None else max(backfill, latest - timedelta(days=OVERLAP_DAYS))
 
-    async def _gsc_call(self, client: Ga4Client, site_url: str, day: date, dims: list[str], start_row: int) -> list[GscRow]:
+    async def _gsc_call(self, client: GoogleClient, site_url: str, day: date, dims: list[str], start_row: int) -> list[GscRow]:
         for attempt in range(GSC_RETRIES + 1):
             async with self._gsc_slots:
                 try:
                     return await client.gsc_search_analytics(site_url, day, day, dims, start_row, ROW_LIMIT)
-                except Ga4QuotaExceeded:
+                except GoogleQuotaExceeded:
                     if attempt == GSC_RETRIES:
                         raise
             await asyncio.sleep(GSC_BACKOFF_SECONDS * 2**attempt)
         raise AssertionError("unreachable")
 
-    async def _gsc_table(self, site: Site, client: Ga4Client, table: str) -> Outcome:
+    async def _gsc_table(self, site: Site, target: str, client: GoogleClient, table: str) -> Outcome:
         model, dims = GSC_TABLES[table]
         started_at = datetime.now(UTC)
         start = await self._gsc_start(site.id, model, table)
         day, rows, error = start, 0, None
-        assert site.gsc_site_url
         try:
             while day <= self._today:
-                rows += await self._gsc_day(site.id, site.gsc_site_url, client, model, dims, day)
+                rows += await self._gsc_day(site.id, target, client, model, dims, day)
                 day += timedelta(days=1)
         except Exception as e:  # noqa: BLE001 ここで止め、次回は取得済みの最終日から続ける
             error = _error(e)
         end = day - timedelta(days=1) if day > start else None
-        return await self._log(site, "gsc", table, start, end, rows, error, started_at)
+        return await self._log(site, "gsc", table, target, start, end, rows, error, started_at)
 
-    async def _gsc_day(self, site_id: int, site_url: str, client: Ga4Client, model: type[Base], dims: list[str],
+    async def _gsc_day(self, site_id: int, site_url: str, client: GoogleClient, model: type[Base], dims: list[str],
                        day: date) -> int:
         fetched: list[GscRow] = []
         while True:
@@ -326,12 +332,14 @@ class Syncer:
             await db.commit()
         return len(values)
 
-    async def _clean_queries(self, site: Site, start: date, end: date) -> Outcome:
+    async def _clean_queries(self, site: Site, target: str, start: date, end: date) -> Outcome:
         """月の数字が確定した後（翌月8日以降）に、その月の表示回数が10回未満のクエリを、クエリ表から消す。
 
-        今回取った月と、まだ整理していない月が対象。サイト全体の数字は gsc_site から出すので影響しない。
+        今回取った月と、まだ整理していない月が対象。取れる最初の月（16ヶ月前）は、Search Console に月の途中から
+        しか残っておらず月の数字がそろわないので整理しない。サイト全体の数字は gsc_site から出すので影響しない。
         """
         started_at = datetime.now(UTC)
+        oldest = months_ago(self._today, BACKFILL_MONTHS)
         async with self._sessions() as db:
             done = set(
                 await db.scalars(
@@ -352,7 +360,9 @@ class Syncer:
                 fetched.add(month)
                 month = _next_month(month)
             eligible = {
-                m for m in fetched | (months_with_data - done) if self._today >= _next_month(m) + timedelta(days=7)
+                m
+                for m in fetched | (months_with_data - done)
+                if m > oldest and self._today >= _next_month(m) + timedelta(days=7)
             }
             removed = 0
             for month in sorted(eligible):
@@ -372,9 +382,9 @@ class Syncer:
                 )
                 removed += result.rowcount  # type: ignore[attr-defined]
                 db.add(
-                    SyncRun(site_id=site.id, source="gsc", table_name="gsc_query_cleanup", start_date=month,
-                            end_date=_next_month(month) - timedelta(days=1), rows=result.rowcount,  # type: ignore[attr-defined]
-                            ok=True, started_at=started_at)
+                    SyncRun(site_id=site.id, source="gsc", table_name="gsc_query_cleanup", target=target,
+                            start_date=month, end_date=_next_month(month) - timedelta(days=1),
+                            rows=result.rowcount, ok=True, started_at=started_at)  # type: ignore[attr-defined]
                 )
             await db.commit()
         outcome = Outcome(site.name, "gsc", "gsc_query_cleanup", min(eligible, default=None),
@@ -386,6 +396,8 @@ class Syncer:
 
     async def _bing_site(self, site: Site, connection: Connection) -> list[Outcome]:
         started_at = datetime.now(UTC)
+        target = connection.target
+        assert target
         try:
             if self._cipher is None:
                 raise RuntimeError("暗号化の鍵（GLANCE_TOKEN_KEY）が設定されていません")
@@ -395,15 +407,14 @@ class Syncer:
                 raise RuntimeError("Bing のキーがありません。サイト設定で Bing を紐づけ直してください")
             api_key = self._cipher.decrypt(key.key_encrypted)
         except Exception as e:  # noqa: BLE001
-            return [await self._log(site, "bing", table, None, None, 0, _error(e), started_at) for table in BING_TABLES]
-        return [await self._bing_table(site, api_key, table) for table in BING_TABLES]
+            return [await self._log(site, "bing", table, target, None, None, 0, _error(e), started_at) for table in BING_TABLES]
+        return [await self._bing_table(site, target, api_key, table) for table in BING_TABLES]
 
-    async def _bing_table(self, site: Site, api_key: str, table: str) -> Outcome:
+    async def _bing_table(self, site: Site, target: str, api_key: str, table: str) -> Outcome:
         method, model, keys = BING_TABLES[table]
         started_at = datetime.now(UTC)
-        assert site.bing_site_url
         try:
-            values = bing_values(site.id, table, await self._bing.stats(api_key, method, site.bing_site_url))
+            values = bing_values(site.id, table, await self._bing.stats(api_key, method, target))
             async with self._sessions() as db:
                 for i in range(0, len(values), CHUNK):
                     statement = pg_insert(model).values(values[i : i + CHUNK])
@@ -411,7 +422,7 @@ class Syncer:
                     await db.execute(statement.on_conflict_do_update(index_elements=keys, set_=columns))
                 await db.commit()
         except Exception as e:  # noqa: BLE001
-            return await self._log(site, "bing", table, None, None, 0, _error(e), started_at)
+            return await self._log(site, "bing", table, target, None, None, 0, _error(e), started_at)
         days = [v.get("date") or v.get("week") for v in values]
-        return await self._log(site, "bing", table, min(days, default=None), max(days, default=None), len(values),
-                               None, started_at)
+        return await self._log(site, "bing", table, target, min(days, default=None), max(days, default=None),
+                               len(values), None, started_at)

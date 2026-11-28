@@ -16,7 +16,7 @@
 | 画面 | リアルタイム（数字のカード・サイトの選択・分ごとの推移・デバイスと国の内訳・イベント・いま見られているページ）、SEO（`/seo`。Search Console・Bing を取り込んだ数字）、サイト設定（GA4・Search Console・Bing の連携）、ログイン、デモ（`/demo`・`/demo/seo`・`/demo/settings/sites`） |
 | ログイン | Google ログイン（OAuth・PKCE・許可リスト・更新トークンの暗号化）。手元で本物の Google につないで確かめた |
 | GA4 | リアルタイム API（1サイト6回の呼び出し）、プロパティの一覧と情報（Admin API） |
-| 確かめ方 | API のテスト88件、画面の lint・型チェック・ビルド。Google を使わないフェイクモードとデモ用の API |
+| 確かめ方 | API のテスト96件、画面の自動テスト2件（`tests/e2e`。デモと、連携→取り込み→ SEO の流れ）、画面の lint・型チェック・ビルド。Google・Bing を使わないフェイクモードとデモ用の API |
 | 文書 | 設計書一式（[overview.md](overview.md) §7）、デザインガイドライン |
 
 ---

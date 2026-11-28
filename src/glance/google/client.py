@@ -12,16 +12,20 @@ class ReauthRequired(Exception):
     """更新トークンが失効した。ログインし直しが要る。"""
 
 
-class Ga4PermissionDenied(Exception):
+class GooglePermissionDenied(Exception):
     """プロパティを見る権限がない。"""
 
 
-class Ga4QuotaExceeded(Exception):
+class GoogleQuotaExceeded(Exception):
     """GA4 の API の上限に当たった。"""
 
 
 class GscApiDisabled(Exception):
     """Search Console API が、ログインに使う GCP のプロジェクトで有効になっていない。"""
+
+
+class GoogleUnavailable(Exception):
+    """Google に届かない（通信の失敗・時間切れ）、または Google 側のエラー（5xx）。"""
 
 
 @dataclass(frozen=True)
@@ -93,7 +97,7 @@ class EventRow:
     event_count: int
 
 
-class Ga4Client(Protocol):
+class GoogleClient(Protocol):
     """1人の利用者の権限で GA4（と Search Console のサイトの一覧）を呼ぶ。"""
 
     async def list_account_summaries(self) -> list[AccountSummary]:

@@ -2,17 +2,18 @@
 
 from datetime import date, timedelta
 
+import httpx
 import psycopg
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.engine import make_url
 
-from glance.google.fake import FakeGa4Client
-from glance.google.ga4 import Ga4QuotaExceeded, GscRow
+from glance.google.fake import FakeGoogleClient
+from glance.google.client import GoogleQuotaExceeded, GscRow
 from glance.sync import runner
 from glance.sync.runner import Syncer, gsc_values, months_ago
-from glance.sync.sitemap import FakeSitemapFetcher, sitemap_paths
+from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher, sitemap_paths
 from glance.sync.values import bing_date, country_code, device, page_path
 
 TODAY = date(2026, 11, 20)
@@ -28,7 +29,7 @@ def _query(database_url: str, sql: str, params: tuple = ()) -> list[tuple]:
 def syncer(app: FastAPI, today: date = TODAY) -> Syncer:
     return Syncer(
         app.state.sessionmaker,
-        app.state.ga4_factory,
+        app.state.google_factory,
         app.state.bing_client,
         app.state.cipher,
         today,
@@ -47,8 +48,9 @@ async def linked_site(client: AsyncClient) -> dict:
 
 @pytest.fixture(autouse=True)
 def short_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
-    # テストでは、初めの取り込みを1ヶ月前からにし（本物は16ヶ月）、上限に当たったときに待たない
-    monkeypatch.setattr(runner, "BACKFILL_MONTHS", 1)
+    # テストでは、初めの取り込みを2ヶ月前の月初からにし（本物は16ヶ月）、上限に当たったときに待たない。
+    # 最初の月（9月）は整理しない月になるので、10月を整理の確かめに使う
+    monkeypatch.setattr(runner, "BACKFILL_MONTHS", 2)
     monkeypatch.setattr(runner, "GSC_BACKOFF_SECONDS", 0)
 
 
@@ -78,7 +80,7 @@ async def test_sync_fills_tables_and_logs(app: FastAPI, logged_in: AsyncClient, 
     site = await linked_site(logged_in)
     outcomes = await syncer(app).run({"gsc", "bing"})
     assert all(o.error is None for o in outcomes), outcomes
-    start = months_ago(TODAY, 1)
+    start = months_ago(TODAY, 2)
     assert _query(database_url, "SELECT min(date), max(date), count(DISTINCT country) FROM gsc_site") == [(start, TODAY, 3)]
     assert set(_query(database_url, "SELECT DISTINCT country FROM gsc_site")) == {("(not set)",), ("JP",), ("US",)}
     assert set(_query(database_url, "SELECT DISTINCT device FROM gsc_page")) == {("desktop",), ("mobile",)}
@@ -122,7 +124,7 @@ async def test_sync_cleans_small_queries_after_month_closes(app: FastAPI, logged
     ) == [(date(2026, 10, 1),)]
 
 
-class FailingOnce(FakeGa4Client):
+class FailingOnce(FakeGoogleClient):
     def __init__(self) -> None:
         super().__init__(latency=(0, 0))
         self.fail_on: date | None = TODAY - timedelta(days=5)
@@ -133,21 +135,23 @@ class FailingOnce(FakeGa4Client):
         return await super().gsc_search_analytics(site_url, start, end, dimensions, start_row, row_limit)
 
 
-@pytest.mark.parametrize("ga4", [FailingOnce()])
-async def test_sync_stops_at_failure_and_resumes(app: FastAPI, ga4: FailingOnce, logged_in: AsyncClient, database_url: str) -> None:
+@pytest.mark.parametrize("google", [FailingOnce()])
+async def test_sync_stops_at_failure_and_resumes(app: FastAPI, google: FailingOnce, logged_in: AsyncClient, database_url: str) -> None:
     await linked_site(logged_in)
     outcomes = await syncer(app).run({"gsc"})
     failed = [o for o in outcomes if o.error]
     assert {o.table for o in failed} == {"gsc_site", "gsc_page", "gsc_query_page"}
     assert all("時間切れ" in (o.error or "") for o in failed)
+    # クエリ表が途中で止まったときは、月の数字がそろっていないので、少ないクエリの整理をしない
+    assert "gsc_query_cleanup" not in {o.table for o in outcomes}
     # 失敗した日の前の日までで止まる
     assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY - timedelta(days=6),)]
-    ga4.fail_on = None
+    google.fail_on = None
     assert all(o.error is None for o in await syncer(app).run({"gsc"}))
     assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
 
 
-class QuotaTwice(FakeGa4Client):
+class QuotaTwice(FakeGoogleClient):
     """同じ日の1回目と2回目は上限に当たる。"""
 
     def __init__(self) -> None:
@@ -158,19 +162,19 @@ class QuotaTwice(FakeGa4Client):
         key = (start, tuple(dimensions))
         self.calls[key] = self.calls.get(key, 0) + 1
         if self.calls[key] <= 2:
-            raise Ga4QuotaExceeded("Quota exceeded")
+            raise GoogleQuotaExceeded("Quota exceeded")
         return await super().gsc_search_analytics(site_url, start, end, dimensions, start_row, row_limit)
 
 
-@pytest.mark.parametrize("ga4", [QuotaTwice()])
-async def test_sync_retries_on_quota(app: FastAPI, ga4: QuotaTwice, logged_in: AsyncClient, database_url: str) -> None:
+@pytest.mark.parametrize("google", [QuotaTwice()])
+async def test_sync_retries_on_quota(app: FastAPI, google: QuotaTwice, logged_in: AsyncClient, database_url: str) -> None:
     await linked_site(logged_in)
     assert all(o.error is None for o in await syncer(app).run({"gsc"}))
-    assert set(ga4.calls.values()) == {3}
+    assert set(google.calls.values()) == {3}
     assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
 
 
-class NoDataUntil(FakeGa4Client):
+class NoDataUntil(FakeGoogleClient):
     """サイトを始める前（数字が無い）の期間がある。"""
 
     def __init__(self) -> None:
@@ -187,15 +191,15 @@ class NoDataUntil(FakeGa4Client):
         return await super().gsc_search_analytics(site_url, start, end, dimensions, start_row, row_limit)
 
 
-@pytest.mark.parametrize("ga4", [NoDataUntil()])
-async def test_sync_resumes_after_empty_period(app: FastAPI, ga4: NoDataUntil, logged_in: AsyncClient) -> None:
+@pytest.mark.parametrize("google", [NoDataUntil()])
+async def test_sync_resumes_after_empty_period(app: FastAPI, google: NoDataUntil, logged_in: AsyncClient) -> None:
     await linked_site(logged_in)
-    ga4.first = TODAY + timedelta(days=1)  # 1回目は、どの日も数字が無いうえ、今日で失敗する
+    google.first = TODAY + timedelta(days=1)  # 1回目は、どの日も数字が無いうえ、今日で失敗する
     await syncer(app).run({"gsc"})
-    ga4.asked.clear()
+    google.asked.clear()
     await syncer(app).run({"gsc"})
     # 取り終えた日（昨日）の3日前から続ける。数字が無くても最初からは取り直さない
-    assert min(ga4.asked) == TODAY - timedelta(days=4)
+    assert min(google.asked) == TODAY - timedelta(days=4)
 
 
 # --- GET /api/seo ----------------------------------------------------------------------------
@@ -260,7 +264,7 @@ class Pages:
     def __init__(self, files: dict[str, bytes]) -> None:
         self.files = files
 
-    async def fetch(self, url: str) -> bytes:
+    async def fetch(self, url: str, allowed) -> bytes:  # type: ignore[no-untyped-def]
         return self.files[url]
 
 
@@ -277,7 +281,11 @@ async def test_sitemap_paths_follow_index_and_gzip() -> None:
         "https://a.example/page.xml": f"<urlset {ns}><url><loc>https://a.example/</loc></url>"
         f"<url><loc>https://www.a.example/about/?x=1</loc></url></urlset>".encode(),
     }
-    assert await sitemap_paths(Pages(files), ["https://a.example/sitemap_index.xml"]) == {"/", "/about/", "/倉庫/"}
+    assert await sitemap_paths(Pages(files), ["https://a.example/sitemap_index.xml"], "sc-domain:a.example") == {
+        "/",
+        "/about/",
+        "/倉庫/",
+    }
 
 
 async def test_sitemap_paths_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,10 +293,10 @@ async def test_sitemap_paths_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sitemap, "MAX_URLS", 1)
     with pytest.raises(ValueError, match="URL が 1 を超えました"):
-        await sitemap_paths(FakeSitemapFetcher(), ["https://a.example/sitemap_index.xml"])
+        await sitemap_paths(FakeSitemapFetcher(), ["https://a.example/sitemap_index.xml"], "https://a.example/")
 
 
-class NoSitemaps(FakeGa4Client):
+class NoSitemaps(FakeGoogleClient):
     async def gsc_sitemaps(self, site_url: str) -> list[str]:
         return []
 
@@ -312,7 +320,7 @@ async def test_seo_report_index(app: FastAPI, logged_in: AsyncClient, database_u
     assert (bing["index"]["pages_shown"], bing["index"]["daily"]) == (None, None)
 
 
-@pytest.mark.parametrize("ga4", [NoSitemaps(latency=(0, 0))])
+@pytest.mark.parametrize("google", [NoSitemaps(latency=(0, 0))])
 async def test_sitemap_missing_is_logged(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
     await linked_site(logged_in)
     outcomes = await syncer(app, date.today()).run({"gsc"})
@@ -321,3 +329,110 @@ async def test_sitemap_missing_is_logged(app: FastAPI, logged_in: AsyncClient, d
     index = (await logged_in.get("/api/seo")).json()["sites"][0]["index"]
     # サイトマップを読めていなければ、URL 数とサイトマップにあるページ数は出さない（検索に出たページ数は出す）
     assert (index["sitemap_urls"], index["indexed"], index["pages_shown"] > 0) == (None, None, True)
+
+
+async def test_one_site_failure_does_not_stop_others(
+    app: FastAPI, logged_in: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = await linked_site(logged_in)
+    second = (await logged_in.post("/api/sites", json={"property_id": "900000002", "gsc_site_url": "https://techshift.example/"})).json()
+    original = Syncer._clean_queries
+
+    async def broken(self, site, target, start, end):  # type: ignore[no-untyped-def]
+        if site.id == first["id"]:
+            raise RuntimeError("DB のエラー")
+        return await original(self, site, target, start, end)
+
+    monkeypatch.setattr(Syncer, "_clean_queries", broken)
+    outcomes = await syncer(app).run({"gsc"})
+    [failed] = [o for o in outcomes if o.error]
+    assert (failed.site, failed.table, "DB のエラー" in failed.error) == ("LogiShift", "-", True)
+    # もう1つのサイトは最後まで取れている
+    assert {o.table for o in outcomes if o.site == second["name"] and o.error is None} >= {
+        "gsc_site", "gsc_page", "gsc_query_page", "sitemap_urls"
+    }
+
+
+async def test_relinking_to_another_site_refetches(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
+    site = await linked_site(logged_in)
+    await syncer(app).run({"gsc", "bing"})
+
+    def counts() -> tuple:
+        return _query(
+            database_url,
+            "SELECT (SELECT count(*) FROM gsc_site WHERE site_id = %s), (SELECT count(*) FROM bing_site_daily WHERE site_id = %s),"
+            " (SELECT count(*) FROM sync_runs WHERE site_id = %s AND source = 'gsc')",
+            (site["id"], site["id"], site["id"]),
+        )[0]
+
+    before = counts()
+    assert all(before)
+    # 外して同じ先に紐づけ直すだけなら、取り込んだ数字は残る（続きから取る）
+    await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": None})
+    await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "sc-domain:logishift.example"})
+    assert counts() == before
+    # 別の先に変えると、前の先の Search Console の数字と取得ログを消す（Bing の数字は残る）
+    await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "https://www.logishift.example/"})
+    gsc_rows, bing_rows, gsc_runs = counts()
+    assert (gsc_rows, gsc_runs) == (0, 0) and bing_rows == before[1]
+    assert _query(database_url, "SELECT count(*) FROM sitemap_urls WHERE site_id = %s", (site["id"],)) == [(0,)]
+    # 次の取り込みは、新しい先の過去分から取る
+    await syncer(app).run({"gsc"})
+    assert _query(database_url, "SELECT min(date) FROM gsc_site WHERE site_id = %s", (site["id"],)) == [(months_ago(TODAY, 2),)]
+    assert _query(database_url, "SELECT DISTINCT target FROM sync_runs WHERE site_id = %s AND source = 'gsc'", (site["id"],)) == [
+        ("https://www.logishift.example/",)
+    ]
+
+
+async def test_bing_page_position_ignores_weeks_without_position(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
+    site = await linked_site(logged_in)
+    await syncer(app, date.today()).run({"bing"})
+    _query(database_url, "DELETE FROM bing_page_weekly")
+    week = date.today() - timedelta(days=7)
+    for day, position, impressions in ((week, 8.0, 100), (week - timedelta(days=7), None, 300)):
+        _query(
+            database_url,
+            "INSERT INTO bing_page_weekly VALUES (%s, %s, '/x/', 1, %s, %s, '{}')",
+            (site["id"], day, impressions, position),
+        )
+    pages = (await logged_in.get("/api/seo", params={"engine": "bing"})).json()["sites"][0]["pages"]
+    # 順位の分からない週（表示300回）を重みに入れると 2.0 になってしまう
+    assert [(p["path"], p["impressions"], p["position"]) for p in pages] == [("/x/", 400, 8.0)]
+
+
+class Redirecting:
+    """http のやり取りを差し替える。転送とサイトの外を試す。"""
+
+    def __init__(self, routes: dict[str, httpx.Response]) -> None:
+        self.routes = routes
+        self.asked: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.asked.append(str(request.url))
+        return self.routes[str(request.url)]
+
+
+async def test_sitemap_stays_inside_the_site() -> None:
+    ns = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
+    urlset = f"<urlset {ns}><url><loc>https://a.example/p/</loc></url></urlset>".encode()
+    index = (
+        f"<sitemapindex {ns}><sitemap><loc>https://a.example/post.xml</loc></sitemap>"
+        f"<sitemap><loc>http://169.254.169.254/latest/</loc></sitemap>"
+        f"<sitemap><loc>https://evil.example/s.xml</loc></sitemap></sitemapindex>"
+    ).encode()
+    web = Redirecting({
+        "https://www.a.example/sitemap.xml": httpx.Response(200, content=index),
+        "https://a.example/post.xml": httpx.Response(200, content=urlset),
+    })
+    fetcher = HttpSitemapFetcher(transport=httpx.MockTransport(web))
+    # サイトの外（ほかのサイト・サーバーの内側の住所）は読まない
+    assert await sitemap_paths(fetcher, ["https://www.a.example/sitemap.xml"], "https://www.a.example/") == {"/p/"}
+    assert web.asked == ["https://www.a.example/sitemap.xml", "https://a.example/post.xml"]
+
+    # サイトの外への転送は止める
+    moved = Redirecting({"https://a.example/sitemap.xml": httpx.Response(301, headers={"location": "http://127.0.0.1:5432/"})})
+    with pytest.raises(ValueError, match="サイトの外へ転送されました"):
+        await sitemap_paths(HttpSitemapFetcher(transport=httpx.MockTransport(moved)), ["https://a.example/sitemap.xml"], "sc-domain:a.example")
+    # 登録されたサイトマップが全部サイトの外なら、読めなかったことにする（空で入れ替えない）
+    with pytest.raises(ValueError, match="サイトの外にあるサイトマップは読みません"):
+        await sitemap_paths(fetcher, ["https://cdn.example/sitemap.xml"], "sc-domain:a.example")

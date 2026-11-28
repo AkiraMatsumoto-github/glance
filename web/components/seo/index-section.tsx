@@ -42,9 +42,12 @@ export function IndexSection({
 }) {
   const [crawlMetric, setCrawlMetric] = useState<CrawlMetric>("indexed");
   const withIndex = sites.filter((s) => s.index !== null);
-  const sum = (pick: (s: SeoSite) => number | null) => withIndex.reduce((n, s) => n + (pick(s) ?? 0), 0);
-  const totalSitemap = sum((s) => s.index!.sitemap_urls);
-  const totalIndexed = sum((s) => s.index!.indexed);
+  // 合計には、サイトマップの URL とインデックスの両方がそろったサイトだけを足す
+  // （片方だけのサイトを入れると、割合がずれる。Bing だけ連携してサイトマップを読めないサイトなど）
+  const complete = withIndex.filter((s) => s.index!.sitemap_urls !== null && s.index!.indexed !== null);
+  const totalSitemap = complete.reduce((n, s) => n + s.index!.sitemap_urls!, 0);
+  const totalIndexed = complete.reduce((n, s) => n + s.index!.indexed!, 0);
+  const totalLabel = complete.length === withIndex.length ? "合計" : `合計（サイトマップを読めた${complete.length}サイト）`;
 
   // 推移: Google は日ごとの検索に出たページ数、Bing はクロールの数字（インデックス数・クロール数・クロールエラー）
   const days = engine === "google" ? (withIndex[0]?.index!.daily ?? []) : (withIndex[0]?.crawl ?? []);
@@ -111,10 +114,10 @@ export function IndexSection({
                 );
               })}
             </TableBody>
-            {withIndex.length > 1 && (
+            {withIndex.length > 1 && complete.length > 0 && (
               <TableFooter>
                 <TableRow>
-                  <TableCell className="pl-4">合計</TableCell>
+                  <TableCell className="pl-4">{totalLabel}</TableCell>
                   <TableCell className={NUM}>{formatNumber(totalSitemap)}</TableCell>
                   <TableCell className={NUM}>{formatNumber(totalIndexed)}</TableCell>
                   <TableCell className={`${NUM} pr-4`}>{ratio(totalIndexed, totalSitemap)}</TableCell>

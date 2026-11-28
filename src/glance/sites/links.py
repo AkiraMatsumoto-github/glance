@@ -1,7 +1,9 @@
 """サイトと Search Console・Bing の紐づけの API（technical_design.md §6.4、screen_design.md §4）。
 
-紐づけ先（URL）は sites に、どの認証で呼ぶか（Google は利用者、Bing はキー）は connections に持つ。
+紐づけは接続設定（connections）の行で持つ。行があれば紐づけていて、target が紐づけ先（サイトの URL）。
+どの認証で呼ぶか（Google は利用者、Bing はキー）も同じ行に持つ。
 Bing のキーは顧客ごとに bing_keys に暗号化して持ち、画面には名前と末尾4文字だけを出す。
+紐づけを外しても取り込んだ数字は残す。紐づけ先を別のサイトに変えたら、前のサイトの数字を消して取り直す。
 """
 
 from typing import Annotated
@@ -9,21 +11,45 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from glance.auth.crypto import TokenCipher
 from glance.auth.deps import CurrentUser, Db
-from glance.bing import BingClient, BingKeyInvalid, BingUnavailable
-from glance.db.models import BingKey, Connection, Site
+from glance.bing.client import BingClient, BingKeyInvalid, BingUnavailable
+from glance.db.models import (
+    BingCrawlDaily,
+    BingKey,
+    BingPageWeekly,
+    BingSiteDaily,
+    Connection,
+    GscPage,
+    GscQueryPage,
+    GscSite,
+    Site,
+    SitemapUrl,
+    SyncRun,
+)
 from glance.errors import AppError
-from glance.google.access import ga4_client, reauth_error
-from glance.google.ga4 import Ga4Client, Ga4PermissionDenied, GscApiDisabled, ReauthRequired
+from glance.google.access import google_client, reauth_error
+from glance.google.client import (
+    GoogleClient,
+    GooglePermissionDenied,
+    GoogleQuotaExceeded,
+    GoogleUnavailable,
+    GscApiDisabled,
+    ReauthRequired,
+)
 
 router = APIRouter(prefix="/api")
 
 KeyName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 ApiKey = Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=200)]
 
+# 紐づけ先を変えたときに消す、取り込んだ数字（ソースごと）。サイトマップは Search Console のプロパティから読む
+DATA_TABLES = {
+    "gsc": [GscSite, GscPage, GscQueryPage, SitemapUrl],
+    "bing": [BingSiteDaily, BingPageWeekly, BingCrawlDaily],
+}
 
 
 # --- Search Console のサイトの選び方 -------------------------------------------------
@@ -56,7 +82,16 @@ def match_gsc_site(hosts: list[str], sites: list[str]) -> str | None:
 # --- 共通の部品 --------------------------------------------------------------------------
 
 
-async def gsc_sites(client: Ga4Client) -> list[str]:
+async def tenant_site(db: Db, tenant_id: int, site_id: int) -> Site:
+    """ログイン中の利用者の顧客のサイト。ほかの顧客のサイトは、無いのと同じに扱う。"""
+    site = await db.get(Site, site_id)
+    if site is None or site.tenant_id != tenant_id:
+        raise AppError(404, "not_found", "サイトが見つかりません")
+    return site
+
+
+async def gsc_sites(client: GoogleClient) -> list[str]:
+    """ログインしたアカウントが見られる Search Console のサイト。取れなければ、理由を画面に出せるエラーにする。"""
     try:
         return await client.list_gsc_sites()
     except ReauthRequired as e:
@@ -65,16 +100,27 @@ async def gsc_sites(client: Ga4Client) -> list[str]:
         raise AppError(
             503, "gsc_api_disabled", "Search Console API が有効になっていません。GCP のプロジェクトで有効にしてください"
         ) from e
-    except Ga4PermissionDenied as e:
+    except GooglePermissionDenied as e:
         raise AppError(403, "permission_denied", "Search Console のサイトの一覧を見る権限がありません") from e
+    except GoogleQuotaExceeded as e:
+        raise AppError(429, "gsc_quota", "Search Console の呼び出しの上限に当たりました。少し待ってから試してください") from e
+    except GoogleUnavailable as e:
+        raise AppError(502, "gsc_unavailable", "Search Console に接続できませんでした。時間をおいて試してください") from e
 
 
-async def suggested_gsc_site(client: Ga4Client, property_id: str | None, sites: list[str]) -> str | None:
+async def ensure_gsc_site(client: GoogleClient, site_url: str) -> None:
+    """紐づけようとしている Search Console のサイトが、ログインしたアカウントで見られるか確かめる。"""
+    if site_url not in await gsc_sites(client):
+        raise AppError(400, "unknown_gsc_site", "このアカウントで見られない Search Console のサイトです")
+
+
+async def suggested_gsc_site(client: GoogleClient, property_id: str | None, sites: list[str]) -> str | None:
+    """GA4 のプロパティと同じドメインのサイト。取れなければ（上限・接続の失敗も）おすすめなしにする。"""
     if not property_id:
         return None
     try:
         hosts = await client.web_stream_hosts(property_id)
-    except Ga4PermissionDenied:
+    except (GooglePermissionDenied, GoogleQuotaExceeded, GoogleUnavailable):
         return None
     except ReauthRequired as e:
         raise reauth_error() from e
@@ -98,13 +144,6 @@ async def _bing_sites(request: Request, api_key: str) -> list[str]:
         raise AppError(502, "bing_unavailable", "Bing に接続できませんでした。時間をおいて試してください") from e
 
 
-async def _site(db: Db, tenant_id: int, site_id: int) -> Site:
-    site = await db.get(Site, site_id)
-    if site is None or site.tenant_id != tenant_id:
-        raise AppError(404, "not_found", "サイトが見つかりません")
-    return site
-
-
 async def _key(db: Db, tenant_id: int, key_id: int) -> BingKey:
     key = await db.get(BingKey, key_id)
     if key is None or key.tenant_id != tenant_id:
@@ -112,17 +151,32 @@ async def _key(db: Db, tenant_id: int, key_id: int) -> BingKey:
     return key
 
 
-async def set_connection(db: Db, site_id: int, source: str, **fields: object) -> None:
-    """紐づけの接続設定を作るか書き換える。fields が無ければ消す（紐づけを外す）。"""
+async def set_link(db: Db, site_id: int, source: str, target: str | None, **auth: object) -> None:
+    """紐づける（target と認証を書く）か、外す（target が None なら行を消す）。
+
+    前に取り込んだ先と違う先に紐づけるときは、前の先の数字と取得ログを消す（次の取り込みで、新しい先の過去分から取る）。
+    外すだけなら数字は残す。同じ先に紐づけ直したら、続きから取る。
+    """
     connection = await db.scalar(select(Connection).where(Connection.site_id == site_id, Connection.source == source))
-    if not fields:
+    if target is None:
         if connection is not None:
             await db.delete(connection)
         return
+    fetched = await db.scalar(
+        select(SyncRun.target)
+        .where(SyncRun.site_id == site_id, SyncRun.source == source, SyncRun.target.is_not(None))
+        .order_by(SyncRun.id.desc())
+        .limit(1)
+    )
+    if fetched is not None and fetched != target:
+        for model in DATA_TABLES[source]:
+            await db.execute(delete(model).where(model.site_id == site_id))  # type: ignore[attr-defined]
+        await db.execute(delete(SyncRun).where(SyncRun.site_id == site_id, SyncRun.source == source))
     if connection is None:
         connection = Connection(site_id=site_id, source=source)
         db.add(connection)
-    for name, value in fields.items():
+    connection.target = target
+    for name, value in auth.items():
         setattr(connection, name, value)
 
 
@@ -139,28 +193,28 @@ class GscLinkIn(BaseModel):
     site_url: str | None  # None で紐づけを外す
 
 
+async def _target(db: Db, site_id: int, source: str) -> str | None:
+    return await db.scalar(select(Connection.target).where(Connection.site_id == site_id, Connection.source == source))
+
+
 @router.get("/sites/{site_id}/gsc")
 async def gsc_choice(site_id: int, request: Request, db: Db, user: CurrentUser) -> GscChoiceOut:
-    site = await _site(db, user.tenant_id, site_id)
-    client = ga4_client(request, user)
+    site = await tenant_site(db, user.tenant_id, site_id)
+    client = google_client(request, user)
     candidates = await gsc_sites(client)
     suggested = await suggested_gsc_site(client, site.ga4_property_id, candidates)
-    return GscChoiceOut(current=site.gsc_site_url, suggested=suggested, candidates=candidates)
+    return GscChoiceOut(current=await _target(db, site.id, "gsc"), suggested=suggested, candidates=candidates)
 
 
 @router.put("/sites/{site_id}/gsc")
 async def link_gsc(site_id: int, body: GscLinkIn, request: Request, db: Db, user: CurrentUser) -> dict[str, str | None]:
-    site = await _site(db, user.tenant_id, site_id)
+    site = await tenant_site(db, user.tenant_id, site_id)
     if body.site_url is not None:
-        if body.site_url not in await gsc_sites(ga4_client(request, user)):
-            raise AppError(400, "unknown_gsc_site", "このアカウントで見られない Search Console のサイトです")
-        await set_connection(db, site.id, "gsc", auth_method="google", user_id=user.id, bing_key_id=None)
-    else:
-        # 外しても、取り込んだ数字は残す（database_design.md §2）
-        await set_connection(db, site.id, "gsc")
-    site.gsc_site_url = body.site_url
+        await ensure_gsc_site(google_client(request, user), body.site_url)
+    # 保存した利用者の更新トークンで取り込む
+    await set_link(db, site.id, "gsc", body.site_url, auth_method="google", user_id=user.id, bing_key_id=None)
     await db.commit()
-    return {"gsc_site_url": site.gsc_site_url}
+    return {"gsc_site_url": body.site_url}
 
 
 # --- Bing --------------------------------------------------------------------------------
@@ -232,17 +286,15 @@ async def bing_key_sites(key_id: int, request: Request, db: Db, user: CurrentUse
 
 @router.put("/sites/{site_id}/bing")
 async def link_bing(site_id: int, body: BingLinkIn, request: Request, db: Db, user: CurrentUser) -> dict[str, object]:
-    site = await _site(db, user.tenant_id, site_id)
+    site = await tenant_site(db, user.tenant_id, site_id)
+    key_id = None
     if body.site_url is not None:
         if body.key_id is None:
             raise AppError(400, "key_required", "Bing のキーを選んでください")
         key = await _key(db, user.tenant_id, body.key_id)
         if body.site_url not in await _bing_sites(request, _cipher(request).decrypt(key.key_encrypted)):
             raise AppError(400, "unknown_bing_site", "このキーで見られない Bing のサイトです")
-        await set_connection(db, site.id, "bing", auth_method="api_key", user_id=None, bing_key_id=key.id)
-    else:
-        # 外しても、取り込んだ数字は残す（database_design.md §2）
-        await set_connection(db, site.id, "bing")
-    site.bing_site_url = body.site_url
+        key_id = key.id
+    await set_link(db, site.id, "bing", body.site_url, auth_method="api_key", user_id=None, bing_key_id=key_id)
     await db.commit()
-    return {"bing_site_url": site.bing_site_url, "bing_key_id": body.key_id if body.site_url else None}
+    return {"bing_site_url": body.site_url, "bing_key_id": key_id}

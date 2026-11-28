@@ -5,24 +5,24 @@ from collections.abc import Callable
 from glance.auth.crypto import TokenCipher
 from glance.config import Settings
 from glance.db.models import User
-from glance.google.fake import FakeGa4Client
-from glance.google.ga4 import Ga4Client, ReauthRequired
-from glance.google.real import RealGa4Client, make_credentials
+from glance.google.fake import FakeGoogleClient
+from glance.google.client import GoogleClient, ReauthRequired
+from glance.google.real import RealGoogleClient, make_credentials
 
-Ga4Factory = Callable[[User], Ga4Client]
+GoogleFactory = Callable[[User], GoogleClient]
 
 
-def default_ga4_factory(settings: Settings, cipher: TokenCipher | None) -> Ga4Factory:
+def default_google_factory(settings: Settings, cipher: TokenCipher | None) -> GoogleFactory:
     if settings.fake_google:
-        fake = FakeGa4Client()
+        fake = FakeGoogleClient()
         return lambda _user: fake
 
     assert cipher is not None
     # 利用者ごとに、認証情報（アクセストークンを持つ）とクライアントを使い回す。
     # 更新トークンが入れ替わったら（ログインし直したら）作り直す
-    cache: dict[int, tuple[str, RealGa4Client]] = {}
+    cache: dict[int, tuple[str, RealGoogleClient]] = {}
 
-    def factory(user: User) -> Ga4Client:
+    def factory(user: User) -> GoogleClient:
         encrypted = user.refresh_token_encrypted
         if not encrypted:
             raise ReauthRequired()
@@ -32,7 +32,7 @@ def default_ga4_factory(settings: Settings, cipher: TokenCipher | None) -> Ga4Fa
         credentials = make_credentials(
             cipher.decrypt(encrypted), settings.google_client_id, settings.google_client_secret
         )
-        client = RealGa4Client(credentials)
+        client = RealGoogleClient(credentials)
         cache[user.id] = (encrypted, client)
         return client
 

@@ -53,17 +53,18 @@ glance/
 │   ├── main.py         # FastAPI の起動。/api と画面の静的ファイルをまとめる
 │   ├── config.py       # 環境変数の読み込み（§9）
 │   ├── auth/           # Google ログイン、セッション、トークンの暗号化
-│   ├── google/         # GA4 Data API・Admin API の呼び出し
+│   ├── google/         # Google（GA4 Data API・Admin API・Search Console API）の呼び出し。client.py が入口、real.py が本物、fake.py がダミー
+│   ├── bing/           # Bing Webmaster API の呼び出し（client.py。本物とダミー）
 │   ├── realtime/       # リアルタイムの取得とサイト横断のまとめ
-│   ├── sites/          # サイト設定
-│   ├── db/             # テーブルの定義、接続
-│   └── batch/          # 日次バッチ（2番目の段階から）
+│   ├── sites/          # サイト設定（routes.py）と、Search Console・Bing の紐づけ（links.py）、デモ（demo.py）
+│   ├── seo/            # SEO の画面の集計（service.py）、期間（periods.py）、デモ（demo.py）
+│   ├── sync/           # 取り込み（python -m glance.sync。runner.py・sitemap.py・values.py）
+│   └── db/             # テーブルの定義、接続
 ├── migrations/         # Alembic
-├── web/                # Next.js（静的書き出し）
-├── deploy/             # VPS で使うもの（systemd のユニット、リリースの流れ）
-├── scripts/            # 手元で人が実行するもの（反映など）
-├── tests/
+├── web/                # Next.js（静的書き出し）。app/（ページ）、components/（部品。realtime・seo・sites と共通の部品）、lib/（API・型・書式・SEO の計算）
+├── tests/              # pytest。e2e/ は画面の自動テスト（ブラウザで動かす。GLANCE_E2E=1 のときだけ）
 └── docs/
+（VPS に出すときに deploy/・scripts/ を足す。§8・§10）
 ```
 
 ## 4. ログイン（Google）
@@ -100,7 +101,7 @@ glance/
 - Fernet（`cryptography`）で暗号化して DB に入れる。鍵は `/etc/glance/glance.env` の `GLANCE_TOKEN_KEY`。作り方は `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`（出てきた値を env に直接書き、どこにも貼らない）。
 - 鍵を入れ替えるときは、新しい鍵と古い鍵を並べて読み（`MultiFernet`）、保存し直すときに新しい鍵で暗号化する。
 
-## 6. API（1番目の段階の分）
+## 6. API
 
 `/api/auth/login`・`/api/auth/callback` 以外は、ログインが要る。サイトは、ログイン中の利用者の顧客（`tenant_id`）のものだけを扱う。
 
@@ -217,7 +218,7 @@ glance/
 
 ### 6.4 サイト設定の紐づけ（Search Console・Bing）と、デモの API
 
-サイト設定は、GA4・Search Console・Bing の列を並べる。Search Console は、GA4 のプロパティを追加するときに一緒に紐づける（[screen_design.md](screen_design.md) §4）。紐づけ先（URL）は `sites` に、どの認証で呼ぶか（Google は利用者、Bing はキー）は `connections` に、Bing のキーは `bing_keys` に持つ（[database_design.md](database_design.md) §2）。コードは `glance/sites/links.py`。
+サイト設定は、GA4・Search Console・Bing の列を並べる。Search Console は、GA4 のプロパティを追加するときに一緒に紐づける（[screen_design.md](screen_design.md) §4）。紐づけは接続設定（`connections`）の行で持つ。行があれば紐づけていて、`target` が紐づけ先（サイトの URL）、同じ行にどの認証で呼ぶか（Google は利用者、Bing はキー）を持つ。Bing のキーは `bing_keys` に持つ（[database_design.md](database_design.md) §2）。紐づけを外しても取り込んだ数字は残す。紐づけ先を別のサイトに変えたら、前の先の数字と取得ログを消し、次の取り込みで新しい先の過去分から取る（取得ログの `target` で、前に取った先を見分ける。2026-11-28 コードレビューの対応）。コードは `glance/sites/links.py`。
 
 **Search Console**
 
@@ -258,11 +259,11 @@ uv run python -m glance.sync --site 1        # サイトを絞る（何度でも
 
 - 接続先と鍵は `.env` から読む（API と同じ）。GSC は、紐づけた利用者の更新トークンで呼ぶ。Bing は、紐づけたキーで呼ぶ。
 - **GSC**: 表（`gsc_site`・`gsc_page`・`gsc_query_page`）ごとに、取得済みの最終日の3日前から今日まで、1日ずつ取る。初めては16ヶ月前の月初から。1日分は消してから入れ直す。1回の取得は2.5万行までで、超える日は続きを取る。途中で失敗したら、その表はそこで止める（次回は取得済みの最終日から続ける。数字が1日もない期間（サイトを始める前など）は、前回までに取り終えた日から続ける）。サイトと表は並べて取るが、Search Console を同時に呼ぶのは3つまでにする（上限は利用者ごとに1分1,200回）。上限に当たったら（429、または 403 の `rateLimitExceeded` など）、15秒・30秒・60秒…と待って5回までやり直す。失敗したときは、API が返したエラーの文を取得ログに残す。
-- **GSC のクエリの整理**: 取り込みの後に、翌月8日を過ぎた月のうち、今回取った月とまだ整理していない月について、その月の表示回数が10回未満のクエリを `gsc_query_page` から消す。整理した月は取得ログ（`gsc_query_cleanup`）に残す。
-- **サイトマップ**: GSC の表の後に、Search Console に登録したサイトマップ（`sitemaps.list`）を読み、載っている URL のパスで `sitemap_urls` を入れ替える（`glance/sync/sitemap.py`。索引はたどり、.gz も読む。上限はファイル500・URL 20万・1ファイル50MB）。サイトマップの取得は、サイトに直接 HTTP で行う。登録が無い・読めないときは失敗として取得ログに残し、前の URL のままにする。
+- **GSC のクエリの整理**: 取り込みの後に、翌月8日を過ぎた月のうち、今回取った月とまだ整理していない月について、その月の表示回数が10回未満のクエリを `gsc_query_page` から消す。整理した月は取得ログ（`gsc_query_cleanup`）に残す。クエリ表の取り込みが途中で失敗した回は整理しない（月の数字がそろっていないため。次回、取り終えてから整理する）。取れる最初の月（16ヶ月前）は、Search Console に月の途中からしか残っておらず月の数字がそろわないので整理しない。
+- **サイトマップ**: GSC の表の後に、Search Console に登録したサイトマップ（`sitemaps.list`）を読み、載っている URL のパスで `sitemap_urls` を入れ替える（`glance/sync/sitemap.py`。索引はたどり、.gz も読む。上限はファイル500・URL 20万・1ファイル50MB）。サイトマップの取得は、サイトに直接 HTTP で行う。紐づけた Search Console のサイトのドメインの外（ほかのサイト・サーバーの内側の住所）は読まず、転送先も1回ずつ確かめる（2026-11-28 コードレビューの対応）。登録が無い・読めない・ドメインの中に1つも無いときは失敗として取得ログに残し、前の URL のままにする。
 - **Bing**: `GetRankAndTrafficStats`・`GetPageStats`・`GetCrawlStats` は日付を選べず、取れる範囲を全部返すので、毎回全部を上書きする（同じ日・週は書き換え）。
 - **値のそろえ方**（[database_design.md](database_design.md) §7）: ページは URL をパスに（そろえて同じパスになった行は足し合わせる）、国は3文字を2文字に（分からない国は `(not set)`）、デバイスは小文字、Bing の日付は `/Date(…)/` を日付に。
-- 表・ソースごとに取得ログ（`sync_runs`）を残し、1行ずつ結果を出す。失敗があれば終了コードは 1。
+- 表・ソースごとに取得ログ（`sync_runs`。取った先 `target` も）を残し、1行ずつ結果を出す。1つのサイト・ソースで思わぬエラー（DB のエラーなど）が出ても、ほかは続ける。失敗があれば終了コードは 1。
 - 1回目（2026-11-27、手元）: Bing は5サイトとも数秒で終わる。GSC の16ヶ月分は時間がかかる（API を1日1回ずつ呼ぶため）。最初は5サイト×3表を同時に呼んで上限に当たり、全部失敗した（エラーは 403）。同時に呼ぶ数を絞り、上限に当たったら待ってやり直す形にした。
 
 **`GET /api/seo`**（`glance/seo/service.py`。ログインが要る。引数と応答の形は §6.3 のデモと同じ）
@@ -328,4 +329,4 @@ HTML は Cloudflare の既定ではキャッシュされず、JS・CSS はファ
 | 画面 | `next dev` で localhost:3100。`/api` への要求を手元の FastAPI に中継する（開発サーバーのときだけの設定。静的書き出しでは中継が使えないため） |
 | Google ログイン | OAuth クライアントの戻り先に、手元の URL（`http://localhost:3100/api/auth/callback`）も登録する。同意画面は「テスト」のままでよい（自分をテストユーザーに入れる。更新トークンは7日で切れる） |
 | フェイクモード | `GLANCE_FAKE_GOOGLE=1` で、Google を使わずに動かす。ログインは許可リストの最初のメールアドレスになり、GA4 はダミーの数字を返す（`glance/google/fake.py`）。ダミーのプロパティのうち「エラー確認用」は、リアルタイムが必ず時間切れになる。`GLANCE_PUBLIC_URL` が手元の URL でないと起動しない |
-| テスト | API は pytest（手元の DB コンテナに `glance_test` を作って使う）。Google の呼び出しは、フェイクや差し替えたクライアントで試す |
+| テスト | API は pytest（手元の DB コンテナに `glance_test` を作って使う）。Google・Bing の呼び出しは、フェイクや差し替えたクライアントで試す。画面は `tests/e2e/`（Playwright。フェイクモードの API と書き出した画面をテストの中で起動し、デモ・連携・取り込み・SEO の流れをブラウザで確かめる）。ブラウザが要るので `GLANCE_E2E=1` のときだけ動かす（ふだんの `uv run pytest` では飛ばす） |

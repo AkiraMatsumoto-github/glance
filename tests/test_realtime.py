@@ -3,8 +3,8 @@ import asyncio
 import pytest
 from httpx import AsyncClient
 
-from glance.google.fake import ERROR_PROPERTY_ID, FakeGa4Client
-from glance.google.ga4 import Ga4PermissionDenied, Ga4QuotaExceeded, MinuteRow, ReauthRequired
+from glance.google.fake import ERROR_PROPERTY_ID, FakeGoogleClient
+from glance.google.client import GooglePermissionDenied, GoogleQuotaExceeded, MinuteRow, ReauthRequired
 
 
 async def add(client: AsyncClient, property_id: str) -> None:
@@ -69,14 +69,14 @@ async def test_failed_site_does_not_break_others(logged_in: AsyncClient) -> None
     assert set(body) == {"fetched_at", "sites"}
 
 
-class SparseFake(FakeGa4Client):
+class SparseFake(FakeGoogleClient):
     """値のない分を抜いた分ごとの行を返す。"""
 
     async def realtime_per_minute(self, property_id: str) -> list[MinuteRow]:
         return [MinuteRow(0, 5, 3), MinuteRow(10, 2, 2)]
 
 
-@pytest.mark.parametrize("ga4", [SparseFake(latency=(0, 0))])
+@pytest.mark.parametrize("google", [SparseFake(latency=(0, 0))])
 async def test_missing_minutes_are_zero(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     minutes = (await logged_in.get("/api/realtime")).json()["sites"][0]["per_minute"]
@@ -86,7 +86,7 @@ async def test_missing_minutes_are_zero(logged_in: AsyncClient) -> None:
     assert values[1] == (0, 0)
 
 
-class RaisingFake(FakeGa4Client):
+class RaisingFake(FakeGoogleClient):
     def __init__(self, error: BaseException) -> None:
         super().__init__(latency=(0, 0))
         self.error = error
@@ -96,10 +96,10 @@ class RaisingFake(FakeGa4Client):
 
 
 @pytest.mark.parametrize(
-    ("ga4", "code"),
+    ("google", "code"),
     [
-        (RaisingFake(Ga4PermissionDenied()), "permission_denied"),
-        (RaisingFake(Ga4QuotaExceeded()), "quota"),
+        (RaisingFake(GooglePermissionDenied()), "permission_denied"),
+        (RaisingFake(GoogleQuotaExceeded()), "quota"),
         (RaisingFake(RuntimeError("boom")), "error"),
     ],
 )
@@ -110,7 +110,7 @@ async def test_error_kinds(logged_in: AsyncClient, code: str) -> None:
     assert site["error"] == code
 
 
-@pytest.mark.parametrize("ga4", [RaisingFake(ReauthRequired())])
+@pytest.mark.parametrize("google", [RaisingFake(ReauthRequired())])
 async def test_reauth_required(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     response = await logged_in.get("/api/realtime")
@@ -118,13 +118,13 @@ async def test_reauth_required(logged_in: AsyncClient) -> None:
     assert response.json()["code"] == "reauth_required"
 
 
-class SlowFake(FakeGa4Client):
+class SlowFake(FakeGoogleClient):
     async def realtime_totals(self, property_id: str):  # type: ignore[no-untyped-def]
         await asyncio.sleep(5)
         return await super().realtime_totals(property_id)
 
 
-@pytest.mark.parametrize("ga4", [SlowFake(latency=(0, 0))])
+@pytest.mark.parametrize("google", [SlowFake(latency=(0, 0))])
 async def test_slow_site_times_out(logged_in: AsyncClient) -> None:
     await add(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]

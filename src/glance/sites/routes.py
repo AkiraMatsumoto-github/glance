@@ -13,12 +13,22 @@ from sqlalchemy import func, select
 from glance.auth.deps import CurrentUser, Db
 from glance.db.models import Connection, Site
 from glance.errors import AppError
-from glance.google.access import ga4_client, reauth_error
-from glance.google.ga4 import Ga4PermissionDenied, GscApiDisabled, ReauthRequired
+from glance.google.access import google_client, reauth_error
+from glance.google.client import (
+    GooglePermissionDenied,
+    GoogleQuotaExceeded,
+    GoogleUnavailable,
+    GscApiDisabled,
+    ReauthRequired,
+)
 from glance.sites import demo
-from glance.sites.links import BingKeyOut, GscChoiceOut, gsc_sites, match_gsc_site, set_connection
+from glance.sites.links import BingKeyOut, GscChoiceOut, ensure_gsc_site, match_gsc_site, set_link, tenant_site
 
 router = APIRouter(prefix="/api")
+
+# 「サイトを追加」で、同じドメインの Search Console のサイトを探すために GA4 の Admin API を同時に呼ぶ数の上限
+# （プロパティの多いアカウントで、上限を使い切らないため）
+STREAM_LOOKUPS = 5
 
 PropertyId = Annotated[str, StringConstraints(pattern=r"^[0-9]{1,20}$")]
 SiteName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -83,30 +93,29 @@ async def _sites(db: Db, tenant_id: int) -> list[Site]:
     )
 
 
-async def _site(db: Db, tenant_id: int, site_id: int) -> Site:
-    site = await db.get(Site, site_id)
-    if site is None or site.tenant_id != tenant_id:
-        raise AppError(404, "not_found", "サイトが見つかりません")
-    return site
-
-
-async def _bing_key_ids(db: Db, site_ids: list[int]) -> dict[int, int | None]:
-    rows = await db.execute(
-        select(Connection.site_id, Connection.bing_key_id).where(
-            Connection.site_id.in_(site_ids), Connection.source == "bing"
-        )
+async def _links(db: Db, site_ids: list[int]) -> dict[int, SiteLinks]:
+    """サイトごとの Search Console・Bing の紐づけ（接続設定の行から）。"""
+    links = {site_id: SiteLinks(gsc_site_url=None, bing_site_url=None, bing_key_id=None) for site_id in site_ids}
+    rows = await db.scalars(
+        select(Connection).where(Connection.site_id.in_(site_ids), Connection.source.in_(["gsc", "bing"]))
     )
-    return {site_id: key_id for site_id, key_id in rows}
+    for c in rows:
+        if c.source == "gsc":
+            links[c.site_id].gsc_site_url = c.target
+        else:
+            links[c.site_id].bing_site_url = c.target
+            links[c.site_id].bing_key_id = c.bing_key_id
+    return links
 
 
-def _out(site: Site, bing_key_id: int | None) -> SiteOut:
+def _out(site: Site, links: SiteLinks) -> SiteOut:
     return SiteOut(
         id=site.id,
         name=site.name,
         sort_order=site.sort_order,
         timezone=site.timezone,
         ga4_property_id=site.ga4_property_id,
-        links=SiteLinks(gsc_site_url=site.gsc_site_url, bing_site_url=site.bing_site_url, bing_key_id=bing_key_id),
+        links=links,
     )
 
 
@@ -117,7 +126,7 @@ def _renumber(sites: list[Site]) -> None:
 
 @router.get("/ga4/properties")
 async def list_properties(request: Request, db: Db, user: CurrentUser) -> list[AccountOut]:
-    client = ga4_client(request, user)
+    client = google_client(request, user)
     try:
         accounts = await client.list_account_summaries()
     except ReauthRequired as e:
@@ -130,13 +139,20 @@ async def list_properties(request: Request, db: Db, user: CurrentUser) -> list[A
     gsc: list[str] | None
     try:
         gsc = await client.list_gsc_sites()
-    except (GscApiDisabled, Ga4PermissionDenied):
+    except (GscApiDisabled, GooglePermissionDenied, GoogleQuotaExceeded, GoogleUnavailable):
         gsc = None
     except ReauthRequired as e:
         raise reauth_error() from e
     matches: dict[str, SearchConsoleMatch] = {}
     if gsc is not None:
-        hosts = await asyncio.gather(*(client.web_stream_hosts(pid) for pid in candidates), return_exceptions=True)
+        slots = asyncio.Semaphore(STREAM_LOOKUPS)
+
+        async def hosts_of(property_id: str) -> list[str]:
+            async with slots:
+                return await client.web_stream_hosts(property_id)
+
+        # 取れないプロパティ（権限・上限・接続の失敗）は、おすすめなしにする
+        hosts = await asyncio.gather(*(hosts_of(pid) for pid in candidates), return_exceptions=True)
         for pid, found in zip(candidates, hosts, strict=True):
             site_url = match_gsc_site(found, gsc) if isinstance(found, list) else None
             matches[pid] = SearchConsoleMatch(site_url=site_url, candidates=gsc)
@@ -161,8 +177,8 @@ async def list_properties(request: Request, db: Db, user: CurrentUser) -> list[A
 @router.get("/sites")
 async def list_sites(db: Db, user: CurrentUser) -> list[SiteOut]:
     sites = await _sites(db, user.tenant_id)
-    keys = await _bing_key_ids(db, [s.id for s in sites])
-    return [_out(s, keys.get(s.id)) for s in sites]
+    links = await _links(db, [s.id for s in sites])
+    return [_out(s, links[s.id]) for s in sites]
 
 
 @router.post("/sites", status_code=201)
@@ -173,15 +189,15 @@ async def create_site(body: SiteCreate, request: Request, db: Db, user: CurrentU
     if exists is not None:
         raise AppError(409, "already_added", "このプロパティは追加済みです")
 
-    client = ga4_client(request, user)
+    client = google_client(request, user)
     try:
         info = await client.get_property(body.property_id)
-    except Ga4PermissionDenied as e:
+    except GooglePermissionDenied as e:
         raise AppError(403, "permission_denied", "このプロパティを見る権限がありません") from e
     except ReauthRequired as e:
         raise reauth_error() from e
-    if body.gsc_site_url is not None and body.gsc_site_url not in await gsc_sites(client):
-        raise AppError(400, "unknown_gsc_site", "このアカウントで見られない Search Console のサイトです")
+    if body.gsc_site_url is not None:
+        await ensure_gsc_site(client, body.gsc_site_url)
 
     next_order = await db.scalar(
         select(func.coalesce(func.max(Site.sort_order) + 1, 0)).where(Site.tenant_id == user.tenant_id)
@@ -192,20 +208,19 @@ async def create_site(body: SiteCreate, request: Request, db: Db, user: CurrentU
         sort_order=next_order,
         timezone=info.time_zone,
         ga4_property_id=info.property_id,
-        gsc_site_url=body.gsc_site_url,
     )
     db.add(site)
     await db.flush()
     db.add(Connection(site_id=site.id, source="ga4", auth_method="google", user_id=user.id))
     if body.gsc_site_url is not None:
-        await set_connection(db, site.id, "gsc", auth_method="google", user_id=user.id)
+        await set_link(db, site.id, "gsc", body.gsc_site_url, auth_method="google", user_id=user.id)
     await db.commit()
-    return _out(site, None)
+    return _out(site, (await _links(db, [site.id]))[site.id])
 
 
 @router.patch("/sites/{site_id}")
 async def update_site(site_id: int, body: SiteUpdate, db: Db, user: CurrentUser) -> SiteOut:
-    site = await _site(db, user.tenant_id, site_id)
+    site = await tenant_site(db, user.tenant_id, site_id)
     if body.name is not None:
         site.name = body.name
     if body.position is not None:
@@ -213,13 +228,13 @@ async def update_site(site_id: int, body: SiteUpdate, db: Db, user: CurrentUser)
         sites.insert(min(body.position, len(sites)), site)
         _renumber(sites)
     await db.commit()
-    return _out(site, (await _bing_key_ids(db, [site.id])).get(site.id))
+    return _out(site, (await _links(db, [site.id]))[site.id])
 
 
 @router.delete("/sites/{site_id}", status_code=204)
 async def delete_site(site_id: int, db: Db, user: CurrentUser) -> Response:
     # 接続設定も消える。取り込んだ数字のテーブルも、サイトと一緒に消す（database_design.md §2）
-    site = await _site(db, user.tenant_id, site_id)
+    site = await tenant_site(db, user.tenant_id, site_id)
     await db.delete(site)
     await db.flush()
     _renumber(await _sites(db, user.tenant_id))

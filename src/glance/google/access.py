@@ -4,16 +4,16 @@ from fastapi import Request
 
 from glance.db.models import User
 from glance.errors import AppError
-from glance.google.ga4 import Ga4Client, ReauthRequired
+from glance.google.client import GoogleClient, ReauthRequired
 
 
 def reauth_error() -> AppError:
     return AppError(401, "reauth_required", "Google の許可が切れました。ログインし直してください")
 
 
-def ga4_client(request: Request, user: User) -> Ga4Client:
+def google_client(request: Request, user: User) -> GoogleClient:
     try:
-        return request.app.state.ga4_factory(user)
+        return request.app.state.google_factory(user)
     except ReauthRequired as e:
         # 更新トークンを持っていない（フェイクのログインの後など）。Google でログインし直してもらう
         raise reauth_error() from e

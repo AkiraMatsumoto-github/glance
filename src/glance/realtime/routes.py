@@ -8,10 +8,10 @@ from sqlalchemy import select
 from glance.auth.deps import CurrentUser, Db
 from glance.db.models import Connection, Site
 from glance.errors import AppError
-from glance.google.fake import DEMO_SITES, FakeGa4Client
-from glance.google.ga4 import ReauthRequired
+from glance.google.fake import DEMO_SITES, FakeGoogleClient
+from glance.google.client import ReauthRequired
 from glance.realtime.service import SiteTarget, fetch_realtime
-from glance.google.access import ga4_client
+from glance.google.access import google_client
 
 router = APIRouter(prefix="/api")
 
@@ -27,7 +27,7 @@ async def realtime(request: Request, db: Db, user: CurrentUser) -> dict[str, Any
         )
     ).scalars()
     targets = [SiteTarget(site_id=s.id, name=s.name, property_id=s.ga4_property_id or "") for s in rows]
-    client = ga4_client(request, user)
+    client = google_client(request, user)
     try:
         return await fetch_realtime(client, targets, timeout=request.app.state.realtime_timeout)
     except ReauthRequired as e:
@@ -35,7 +35,7 @@ async def realtime(request: Request, db: Db, user: CurrentUser) -> dict[str, Any
 
 
 # デモはログイン不要。ダミーの数字だけを返し、DB・Google・利用者のデータには触れない
-_demo_client = FakeGa4Client()
+_demo_client = FakeGoogleClient()
 _demo_targets = [SiteTarget(site_id=i + 1, name=name, property_id=pid) for i, (pid, name) in enumerate(DEMO_SITES)]
 
 
