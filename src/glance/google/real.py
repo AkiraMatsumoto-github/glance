@@ -1,8 +1,13 @@
-"""本物の GA4（Data API・Admin API）。ログインした利用者の更新トークンで呼ぶ（data_sources.md §2・§5）。"""
+"""本物の GA4（Data API・Admin API）と Search Console のサイトの一覧。ログインした利用者の更新トークンで呼ぶ
+（data_sources.md §2・§3・§5）。"""
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import date
 from typing import Any
+from urllib.parse import quote, urlsplit
+
+import httpx
 
 import google.auth.transport.requests
 from google.analytics.admin_v1beta import AnalyticsAdminServiceAsyncClient
@@ -19,6 +24,8 @@ from glance.google.ga4 import (
     EventRow,
     Ga4PermissionDenied,
     Ga4QuotaExceeded,
+    GscApiDisabled,
+    GscRow,
     MinuteRow,
     PageRow,
     PropertyInfo,
@@ -28,6 +35,8 @@ from glance.google.ga4 import (
 )
 
 PV, UU, KEY_EVENTS, EVENTS = "screenPageViews", "activeUsers", "keyEvents", "eventCount"
+
+GSC_SITES_URL = "https://www.googleapis.com/webmasters/v3/sites"
 
 
 def make_credentials(refresh_token: str, client_id: str, client_secret: str) -> Credentials:
@@ -51,10 +60,12 @@ class RealGa4Client:
         credentials: Credentials,
         data_client: Any | None = None,
         admin_client: Any | None = None,
+        gsc_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._credentials = credentials
         self._data = data_client or BetaAnalyticsDataAsyncClient(credentials=credentials)
         self._admin = admin_client or AnalyticsAdminServiceAsyncClient(credentials=credentials)
+        self._gsc_transport = gsc_transport  # テストで差し替える
         self._refresh_lock = asyncio.Lock()
 
     async def _ensure_token(self) -> None:
@@ -106,6 +117,82 @@ class RealGa4Client:
             return PropertyInfo(property_id=property_id, name=prop.display_name, time_zone=prop.time_zone)
 
         return await self._call(run)
+
+    async def web_stream_hosts(self, property_id: str) -> list[str]:
+        async def run() -> list[str]:
+            pager = await self._admin.list_data_streams(parent=f"properties/{property_id}")
+            hosts = []
+            async for stream in pager:
+                uri = stream.web_stream_data.default_uri
+                host = urlsplit(uri if "://" in uri else f"https://{uri}").hostname if uri else None
+                if host:
+                    hosts.append(host)
+            return hosts
+
+        return await self._call(run)
+
+    # Search Console API
+
+    async def _gsc(self, method: str, url: str, body: dict[str, Any] | None = None) -> Any:
+        await self._ensure_token()
+        async with httpx.AsyncClient(timeout=60, transport=self._gsc_transport) as http:
+            response = await http.request(
+                method, url, json=body, headers={"Authorization": f"Bearer {self._credentials.token}"}
+            )
+        if response.status_code < 400:
+            return response.json()
+        text = response.text
+        try:
+            message = str(response.json().get("error", {}).get("message", ""))[:300]
+        except ValueError:
+            message = text[:300]
+        if response.status_code == 401:
+            raise ReauthRequired()
+        # 上限（1分あたりの回数など）は、429 のほか 403 でも返る
+        if response.status_code == 429 or any(
+            word in text for word in ("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED")
+        ):
+            raise Ga4QuotaExceeded(message)
+        if response.status_code == 403:
+            if "SERVICE_DISABLED" in text or "accessNotConfigured" in text:
+                raise GscApiDisabled(message)
+            if "insufficient" in text.lower():
+                # Search Console を読む許可をもらっていない。ログインし直して許可してもらう
+                raise ReauthRequired()
+            raise Ga4PermissionDenied(message)
+        response.raise_for_status()
+        return response.json()
+
+    async def list_gsc_sites(self) -> list[str]:
+        entries = (await self._gsc("GET", GSC_SITES_URL)).get("siteEntry", [])
+        return sorted(e["siteUrl"] for e in entries if e.get("permissionLevel") != "siteUnverifiedUser")
+
+    async def gsc_sitemaps(self, site_url: str) -> list[str]:
+        result = await self._gsc("GET", f"{GSC_SITES_URL}/{quote(site_url, safe='')}/sitemaps")
+        return [s["path"] for s in result.get("sitemap", [])]
+
+    async def gsc_search_analytics(
+        self, site_url: str, start: date, end: date, dimensions: list[str], start_row: int, row_limit: int
+    ) -> list[GscRow]:
+        body = {
+            "startDate": start.isoformat(),
+            "endDate": end.isoformat(),
+            "dimensions": dimensions,
+            "type": "web",
+            "dataState": "final",
+            "rowLimit": row_limit,
+            "startRow": start_row,
+        }
+        result = await self._gsc("POST", f"{GSC_SITES_URL}/{quote(site_url, safe='')}/searchAnalytics/query", body)
+        return [
+            GscRow(
+                keys=row["keys"],
+                clicks=round(row["clicks"]),
+                impressions=round(row["impressions"]),
+                position=row["position"],
+            )
+            for row in result.get("rows", [])
+        ]
 
     # Data API（リアルタイム）
 

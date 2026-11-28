@@ -1,6 +1,6 @@
-"""SEO の画面の API。今はデモ用の GET /api/demo/seo だけ（technical_design.md §6.3）。
+"""SEO の画面の API。GET /api/seo（取り込んだ表から集計）と、デモ用の GET /api/demo/seo（technical_design.md §6.3）。
 
-本物の GET /api/seo は、2番目の段階で GSC・Bing のバッチを作るときに足す。応答の形は同じにする。
+応答の形は同じ。
 """
 
 from datetime import date, datetime
@@ -9,13 +9,31 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 
+from glance.auth.deps import CurrentUser, Db
 from glance.errors import AppError
 from glance.seo.demo import Engine, demo_seo
 from glance.seo.periods import CompareName, PeriodError, PeriodName
+from glance.seo.service import seo_report
 
 router = APIRouter(prefix="/api")
 
 JST = ZoneInfo("Asia/Tokyo")
+
+
+@router.get("/seo")
+async def seo(
+    db: Db,
+    user: CurrentUser,
+    engine: Engine = "google",
+    period: PeriodName = "last_28_days",
+    compare: CompareName = "previous_period",
+    start: date | None = None,
+    end: date | None = None,
+) -> dict[str, Any]:
+    try:
+        return await seo_report(db, user.tenant_id, engine, period, compare, datetime.now(JST).date(), start, end)
+    except PeriodError as e:
+        raise AppError(400, "invalid_period", str(e)) from e
 
 
 @router.get("/demo/seo")

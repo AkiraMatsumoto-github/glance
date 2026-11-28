@@ -97,17 +97,21 @@ async def test_demo_sites_need_no_login_and_touch_no_data(client: AsyncClient, d
     assert [name for name, added in listed if added] == [s["name"] for s in sites.json()]
     assert [name for name, added in listed if not added] == ["デモサイト F"]
     # デモの5サイトは、Search Console と Bing を紐づけ済み。紐づけ先は、選べる一覧の中にある
-    gsc = (await client.get("/api/demo/gsc/sites")).json()
-    bing = (await client.get("/api/demo/bing/sites")).json()
-    assert bing["key_saved"] is True
+    keys = (await client.get("/api/demo/bing/keys")).json()
+    assert [set(k) for k in keys] == [{"id", "name", "last4"}]
     for site in sites.json():
-        assert site["links"]["gsc_site_url"] in gsc
-        assert site["links"]["bing_site_url"] in bing["sites"]
+        gsc = (await client.get(f"/api/demo/sites/{site['id']}/gsc")).json()
+        assert site["links"]["gsc_site_url"] == gsc["current"] == gsc["suggested"]
+        assert gsc["current"] in gsc["candidates"]
+        bing = (await client.get(f"/api/demo/bing/keys/{site['links']['bing_key_id']}/sites")).json()
+        assert site["links"]["bing_site_url"] in bing
     # F は Search Console のサイトが見つからない例。選べる一覧は出す
     not_added = next(p for a in properties.json() for p in a["properties"] if not p["added"])
-    assert not_added["search_console"] == {"site_url": None, "candidates": gsc}
+    assert not_added["search_console"]["site_url"] is None
+    assert not_added["search_console"]["candidates"] == gsc["candidates"]
     # デモには書き込みの API がない
     assert (await client.post("/api/demo/sites", json={"property_id": "900000006"})).status_code in (404, 405)
+    assert (await client.post("/api/demo/bing/keys", json={"name": "x", "key": "12345678"})).status_code in (404, 405)
     url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(url) as conn:
         assert conn.execute("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM sites)").fetchone() == (0, 0)

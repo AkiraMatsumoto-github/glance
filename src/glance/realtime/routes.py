@@ -11,7 +11,7 @@ from glance.errors import AppError
 from glance.google.fake import DEMO_SITES, FakeGa4Client
 from glance.google.ga4 import ReauthRequired
 from glance.realtime.service import SiteTarget, fetch_realtime
-from glance.sites.routes import ga4_client
+from glance.google.access import ga4_client
 
 router = APIRouter(prefix="/api")
 

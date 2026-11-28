@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.engine import make_url
 
+from glance.bing import BingClient, FakeBingClient
 from glance.config import Settings
 from glance.google.fake import FakeGa4Client
 from glance.google.ga4 import Ga4Client
@@ -42,7 +43,7 @@ def database_url() -> str:
 def _clean(database_url: str) -> None:
     url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("TRUNCATE sessions, connections, sites, users RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE sessions, connections, sites, bing_keys, users RESTART IDENTITY CASCADE")
         conn.execute("DELETE FROM tenants WHERE id <> 1")
 
 
@@ -68,9 +69,17 @@ def ga4() -> Ga4Client:
 
 
 @pytest.fixture
-async def app(database_url: str, ga4: Ga4Client) -> AsyncIterator[FastAPI]:
+def bing() -> BingClient:
+    """テストで差し替える Bing クライアント。既定は「bad」で始まるキーだけを使えないキーとするダミー。"""
+    return FakeBingClient()
+
+
+@pytest.fixture
+async def app(database_url: str, ga4: Ga4Client, bing: BingClient) -> AsyncIterator[FastAPI]:
     _clean(database_url)
-    application = create_app(make_settings(database_url), ga4_factory=lambda _user: ga4, realtime_timeout=0.5)
+    application = create_app(
+        make_settings(database_url), ga4_factory=lambda _user: ga4, realtime_timeout=0.5, bing_client=bing
+    )
     yield application
     await application.state.engine.dispose()
 

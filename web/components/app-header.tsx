@@ -1,5 +1,6 @@
 "use client";
 
+import { LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "リアルタイム" },
+  { href: "/seo", label: "SEO" },
   { href: "/settings/sites", label: "サイト設定" },
 ];
 
@@ -52,15 +54,17 @@ export function AppHeader() {
   return (
     // スクロールしても上に固定する。ダイアログ（z-50）より下、本文より上
     <header className="sticky top-0 z-40 border-b bg-surface">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
-        <Link href="/" className="text-lg font-semibold tracking-tight">
+      {/* スマホでは横幅が足りないので、間を詰め、「Glance」の字を出さず、「ログアウト」は印だけにする（デモのヘッダーと同じ） */}
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-6 sm:px-6">
+        <Link href="/" className="text-lg font-semibold tracking-tight max-sm:hidden">
           Glance
         </Link>
         <HeaderNav items={NAV} />
         <div className="ml-auto flex items-center gap-3 text-sm">
           {me && <span className="hidden text-ink-3 sm:inline">{me.email}</span>}
-          <Button variant="ghost" size="sm" onClick={logout}>
-            ログアウト
+          <Button variant="ghost" size="sm" onClick={logout} aria-label="ログアウト" title="ログアウト">
+            <LogOut className="sm:hidden" aria-hidden />
+            <span className="max-sm:hidden">ログアウト</span>
           </Button>
         </div>
       </div>

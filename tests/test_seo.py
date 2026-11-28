@@ -53,6 +53,11 @@ async def test_demo_google(client: AsyncClient) -> None:
     assert [q["clicks"] for q in site["queries"]] == sorted((q["clicks"] for q in site["queries"]), reverse=True)
     assert site["pages"][0]["path"].startswith("/")
     assert site["crawl"] is None
+    # インデックスの目安（本物と同じ形）
+    index = site["index"]
+    assert set(index) == {"sitemap_urls", "sitemap_checked_at", "indexed", "pages_shown", "daily"}
+    assert 0 < index["indexed"] <= index["sitemap_urls"] and index["pages_shown"] >= index["indexed"]
+    assert len(index["daily"]) == 28
     # 同じ条件なら同じ数字
     again = (await client.get("/api/demo/seo?engine=google&period=last_28_days&compare=previous_period")).json()
     assert again["sites"][0]["totals"] == site["totals"]
@@ -66,6 +71,9 @@ async def test_demo_bing(client: AsyncClient) -> None:
     assert site["queries"] == []  # Bing のクエリは今は取らない
     assert len(site["crawl"]) == 7 and {"crawled", "indexed", "errors"} <= set(site["crawl"][0])
     assert site["pages"][0]["compare_clicks"] is None
+    # Bing のインデックスは、クロールの数字の期間の最後の日のインデックス数
+    assert site["index"]["indexed"] == site["crawl"][-1]["indexed"]
+    assert (site["index"]["pages_shown"], site["index"]["daily"]) == (None, None)
 
 
 async def test_demo_rejects_bad_period(client: AsyncClient) -> None:

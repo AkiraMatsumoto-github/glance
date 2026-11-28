@@ -1,10 +1,11 @@
 """デモのサイト設定のダミー（screen_design.md §4・§6、technical_design.md §6.4）。
 
-サイトは「デモサイト A〜E」。Google（GA4・Search Console）と Bing を紐づけ済みにする。
+サイトは「デモサイト A〜E」。Search Console と Bing を紐づけ済みにする（Bing のキーは1つ）。
 「デモサイト F」は、まだ追加していない GA4 のプロパティで、Search Console のサイトが見つからない例。
 ドメインの .example は、例のために取ってあるもので実在しない。DB・Google・Bing・利用者のデータには触れない。
 """
 
+from glance.errors import AppError
 from glance.google.fake import DEMO_SITES
 
 TIMEZONE = "Asia/Tokyo"
@@ -17,7 +18,8 @@ _DOMAINS = {pid: f"demo-{name[-1].lower()}.example" for pid, name in [*DEMO_SITE
 # ほかのドメインと合わない URL のサイトも1つ置き、選ぶ一覧に出る例にする
 GSC_SITES = [f"sc-domain:{_DOMAINS[pid]}" for pid, _ in DEMO_SITES] + ["https://blog.demo-a.example/"]
 
-# 保存済みの API キーで見られる Bing のサイト
+# 保存済みの Bing のキー（名前と末尾4文字だけ）と、そのキーで見られるサイト
+BING_KEYS = [{"id": 1, "name": "デモのキー", "last4": "demo"}]
 BING_SITES = [f"https://{_DOMAINS[pid]}/" for pid, _ in DEMO_SITES]
 
 
@@ -29,7 +31,11 @@ def sites() -> list[dict]:
             "sort_order": i,
             "timezone": TIMEZONE,
             "ga4_property_id": pid,
-            "links": {"gsc_site_url": f"sc-domain:{_DOMAINS[pid]}", "bing_site_url": f"https://{_DOMAINS[pid]}/"},
+            "links": {
+                "gsc_site_url": f"sc-domain:{_DOMAINS[pid]}",
+                "bing_site_url": f"https://{_DOMAINS[pid]}/",
+                "bing_key_id": 1,
+            },
         }
         for i, (pid, name) in enumerate(DEMO_SITES)
     ]
@@ -57,5 +63,12 @@ def accounts() -> list[dict]:
     return [{"account_id": "800000001", "name": "デモのアカウント", "properties": properties}]
 
 
-def bing() -> dict:
-    return {"key_saved": True, "sites": BING_SITES}
+def gsc_choice(site_id: int) -> dict:
+    site = next((s for s in sites() if s["id"] == site_id), None)
+    if site is None:
+        raise AppError(404, "not_found", "サイトが見つかりません")
+    return {
+        "current": site["links"]["gsc_site_url"],
+        "suggested": _gsc_match(site["ga4_property_id"]),
+        "candidates": GSC_SITES,
+    }

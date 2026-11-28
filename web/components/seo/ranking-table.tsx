@@ -31,7 +31,7 @@ type Row = {
   site: SeoSite;
   clicks: number;
   impressions: number;
-  position: number;
+  position: number | null;
   change: number | null; // 比べる期間との差。比べる期間の上位に入っていないときは null
 };
 
@@ -40,7 +40,8 @@ function rowsOf(kind: "query" | "page", sites: SeoSite[]): Row[] {
     const items =
       kind === "query"
         ? site.queries.map((q) => ({ ...q, name: q.query, path: null }))
-        : site.pages.map((p) => ({ ...p, name: p.title, path: p.path }));
+        : // タイトルが無ければ（本物は今は無い）、パスを名前にする
+          site.pages.map((p) => ({ ...p, name: p.title ?? p.path, path: p.title ? p.path : null }));
     return items.map((item) => ({
       key: `${site.site_id}:${item.path ?? item.name}`,
       name: item.name,
@@ -158,7 +159,7 @@ export function RankingTable({
                   )}
                   <TableCell className={NUM}>{formatNumber(row.impressions)}</TableCell>
                   <TableCell className={NUM}>{row.impressions ? formatPercent(row.clicks / row.impressions) : "—"}</TableCell>
-                  <TableCell className={`${NUM} pr-4`}>{row.position.toFixed(1)}</TableCell>
+                  <TableCell className={`${NUM} pr-4`}>{row.position === null ? "—" : row.position.toFixed(1)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

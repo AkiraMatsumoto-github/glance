@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { LoadingIndicator } from "@/components/loading-indicator";
@@ -15,14 +16,15 @@ import {
   formatMetricAxis,
   metricValue,
 } from "@/components/seo/metrics";
+import { IndexSection } from "@/components/seo/index-section";
 import { RankingTable } from "@/components/seo/ranking-table";
 import { SeoCards } from "@/components/seo/seo-cards";
 import { SeriesLegend } from "@/components/series-legend";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { api, errorMessage } from "@/lib/api";
-import { countDays, formatCompact, formatDate, formatNumber, formatRange, siteColor } from "@/lib/format";
-import type { CrawlDay, Seo, SeoCompareName, SeoEngine, SeoPeriodName, SeoSite } from "@/lib/types";
+import { countDays, formatDate, formatRange, siteColor } from "@/lib/format";
+import type { Seo, SeoCompareName, SeoEngine, SeoPeriodName, SeoSite } from "@/lib/types";
 
 // 最後に取った結果（URL ごと）。ほかの画面から戻ったときや条件を変えたときに、取り終えるまでの間これを出す
 // （ブラウザのメモリだけ。読み込み直すと消える）
@@ -42,8 +44,8 @@ const COMPARES: { value: SeoCompareName; label: string }[] = [
   { value: "none", label: "比べない" },
 ];
 
-type CrawlMetric = "indexed" | "crawled" | "errors";
-const CRAWL_LABELS: Record<CrawlMetric, string> = { indexed: "インデックス数", crawled: "クロール数", errors: "クロールエラー" };
+
+const ENGINE_LABELS: Record<SeoEngine, string> = { google: "Search Console", bing: "Bing" };
 
 const TOTAL_KEY = "total";
 const TOTAL_COLOR = "var(--ink)"; // 合計はサイトの色を使わず墨色（design_guideline.md §2.2）
@@ -79,15 +81,6 @@ function dailyRows(sites: SeoSite[], metric: SeoMetric, withCompare: boolean): D
   });
 }
 
-function crawlRows(sites: SeoSite[], metric: CrawlMetric): DateRow[] {
-  const days: CrawlDay[] = sites[0]?.crawl ?? [];
-  return days.map((day, i) => {
-    const row: DateRow = { date: day.date };
-    for (const site of sites) row[`s${site.site_id}`] = site.crawl?.[i]?.[metric] ?? null;
-    return row;
-  });
-}
-
 // SEO の画面の中身（docs/01_design/screen_design.md §7）。条件を変えるたびに取る。
 // 本物（/api/seo。2番目の段階で作る）とデモ（/api/demo/seo）で共通にし、取り元だけを変える
 export function SeoView({ endpoint }: { endpoint: string }) {
@@ -107,7 +100,6 @@ export function SeoView({ endpoint }: { endpoint: string }) {
   const loading = request !== null && request !== done;
 
   const [metric, setMetric] = useState<SeoMetric>("clicks");
-  const [crawlMetric, setCrawlMetric] = useState<CrawlMetric>("indexed");
   // 外したサイトと合計の線。条件を変えても保つ（開き直すと全部オンに戻る）
   const [unselected, setUnselected] = useState<Set<number>>(new Set());
   const [showTotal, setShowTotal] = useState(true);
@@ -178,7 +170,7 @@ export function SeoView({ endpoint }: { endpoint: string }) {
       : []),
   ];
 
-  const dataUntil = data && `${formatDate(data.data_until)}までのデータ`;
+  const dataUntil = data?.data_until ? `${formatDate(data.data_until)}までのデータ` : null;
 
   return (
     <>
@@ -215,7 +207,7 @@ export function SeoView({ endpoint }: { endpoint: string }) {
                   aria-label="期間の始まり"
                   className={CONTROL}
                   value={start}
-                  max={data?.data_until}
+                  max={data?.data_until ?? undefined}
                   onChange={(e) => setStart(e.target.value)}
                 />
                 〜
@@ -224,7 +216,7 @@ export function SeoView({ endpoint }: { endpoint: string }) {
                   aria-label="期間の終わり"
                   className={CONTROL}
                   value={end}
-                  max={data?.data_until}
+                  max={data?.data_until ?? undefined}
                   onChange={(e) => setEnd(e.target.value)}
                 />
               </div>
@@ -252,7 +244,7 @@ export function SeoView({ endpoint }: { endpoint: string }) {
               {formatRange(data.period.start, data.period.end)}（{countDays(data.period.start, data.period.end)}日間）
               {data.compare && `を ${formatRange(data.compare.start, data.compare.end)} と比べる`}
               {/* スマホでは、いつまでのデータかをこの行に回す */}
-              <span className="sm:hidden">（{dataUntil}）</span>
+              {dataUntil && <span className="sm:hidden">（{dataUntil}）</span>}
             </p>
           )}
         </div>
@@ -266,7 +258,22 @@ export function SeoView({ endpoint }: { endpoint: string }) {
         {/* 取っている間は、前の数字はそのまま出し、画面の真ん中に印を出すだけにする */}
         {loading && <LoadingIndicator />}
 
-        {data && (
+        {/* 本物で、まだ連携していないとき・まだ取り込んでいないとき（デモは、いつも数字がある） */}
+        {data && data.sites.length === 0 && (
+          <div className="rounded-xl border bg-surface px-6 py-10 text-center">
+            <p>{ENGINE_LABELS[data.engine]}と連携しているサイトがありません。サイト設定で連携してください。</p>
+            <Link href="/settings/sites" className="mt-3 inline-block font-medium underline underline-offset-4">
+              サイト設定へ
+            </Link>
+          </div>
+        )}
+        {data && data.sites.length > 0 && data.data_until === null && (
+          <Notice kind="warning">
+            まだ{ENGINE_LABELS[data.engine]}の数字を取り込んでいません。取り込みのコマンド（uv run python -m glance.sync）を動かすと出ます。
+          </Notice>
+        )}
+
+        {data && data.sites.length > 0 && (
           <div className="space-y-5">
             <SeoCards
               engine={data.engine}
@@ -320,7 +327,8 @@ export function SeoView({ endpoint }: { endpoint: string }) {
                     title={METRIC_LABELS[chartMetric]}
                     format={(v) => formatMetric(v, chartMetric)}
                     axisFormat={(v) => formatMetricAxis(v, chartMetric)}
-                    reversed={chartMetric === "position"}
+                    // 掲載順位も、数字が小さいほど下に描く（縦軸を逆にしない。2026-11-27 利用者の決定）
+                    fitToValues={chartMetric === "position"}
                   />
                 ) : (
                   <SelectPrompt />
@@ -328,40 +336,13 @@ export function SeoView({ endpoint }: { endpoint: string }) {
               </div>
             </section>
 
+            {/* インデックス（Google は検索に出たページ、Bing はインデックス数）とサイトマップ。日ごとの推移のすぐ下 */}
+            <IndexSection engine={data.engine} sites={selected} colors={colors} />
+
             {/* Bing のクエリは今は取らない（data_sources.md §4） */}
             {data.engine === "google" && <RankingTable kind="query" sites={selected} colors={colors} hasCompare={hasCompare} />}
             <RankingTable kind="page" sites={selected} colors={colors} hasCompare={hasCompare} />
 
-            {data.engine === "bing" && (
-              <section className="rounded-xl border bg-surface">
-                <div className="border-b px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="text-base font-medium">クロールとインデックス</h2>
-                    <Segmented
-                      label="指標"
-                      options={(Object.keys(CRAWL_LABELS) as CrawlMetric[]).map((m) => ({ value: m, label: CRAWL_LABELS[m] }))}
-                      value={crawlMetric}
-                      onChange={setCrawlMetric}
-                    />
-                  </div>
-                  {selected.length > 0 && <SeriesLegend sites={selected} colors={colors} />}
-                </div>
-                <div className="px-2 py-4">
-                  {selected.length > 0 ? (
-                    // インデックス数はその日の在庫なので、サイトを足した合計の線は出さない
-                    <DateLineChart
-                      rows={crawlRows(selected, crawlMetric)}
-                      series={selected.map((s) => ({ key: `s${s.site_id}`, name: s.name, color: colors.get(s.site_id) }))}
-                      title={CRAWL_LABELS[crawlMetric]}
-                      format={formatNumber}
-                      axisFormat={formatCompact}
-                    />
-                  ) : (
-                    <SelectPrompt />
-                  )}
-                </div>
-              </section>
-            )}
           </div>
         )}
       </PageBody>

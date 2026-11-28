@@ -29,7 +29,7 @@ type ChartProps = {
   title: string; // ホバーのカードの見出し（指標の名前）
   format: (value: number) => string;
   axisFormat: (value: number) => string;
-  reversed?: boolean; // 掲載順位は小さいほど上なので、縦軸を逆にする
+  fitToValues?: boolean; // 縦軸を 0 からではなく、値のある範囲に合わせる（掲載順位。0 からだと線が潰れる）
 };
 
 function TooltipCard({ active, payload, series, title, format }: TooltipContentProps & ChartProps) {
@@ -78,7 +78,7 @@ function TooltipCard({ active, payload, series, title, format }: TooltipContentP
 }
 
 export function DateLineChart(props: ChartProps) {
-  const { rows, series, axisFormat, reversed = false } = props;
+  const { rows, series, axisFormat, fitToValues = false } = props;
   // 横軸の目盛りは、始め・真ん中・終わりの3つ
   const ticks = rows.length ? [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])].map((i) => rows[i].date) : [];
 
@@ -99,9 +99,7 @@ export function DateLineChart(props: ChartProps) {
           />
           <YAxis
             orientation="right"
-            reversed={reversed}
-            // 掲載順位は 0 から始めると線が潰れるので、値のある範囲に合わせる
-            domain={reversed ? ["auto", "auto"] : [0, "auto"]}
+            domain={fitToValues ? ["auto", "auto"] : [0, "auto"]}
             axisLine={false}
             tickLine={false}
             width={48}

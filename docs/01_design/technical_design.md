@@ -115,10 +115,12 @@ glance/
 | `POST /api/sites` | サイトを追加する。GA4 のプロパティ ID を受け取り、名前とタイムゾーンを Admin API の `properties.get` から取って入れる。GA4 の接続設定（`connections`）も作る |
 | `PATCH /api/sites/{id}` | 名前・並び順を変える |
 | `DELETE /api/sites/{id}` | サイトを消す（接続設定も消す） |
+| `GET`・`PUT /api/sites/{id}/gsc`、`GET`・`POST /api/bing/keys`、`PUT /api/bing/keys/{id}`、`GET /api/bing/keys/{id}/sites`、`PUT /api/sites/{id}/bing` | Search Console・Bing の紐づけ（§6.4） |
 | `GET /api/realtime` | 全サイトのリアルタイムを取る（§6.1） |
 | `GET /api/demo/realtime` | デモ用のダミーの数字（§6.2）。ログイン不要 |
+| `GET /api/seo` | 取り込んだ Search Console・Bing の数字（§6.5） |
 | `GET /api/demo/seo` | SEO の画面のデモ用のダミーの数字（§6.3）。ログイン不要 |
-| `GET /api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/gsc/sites`・`/api/demo/bing/sites` | サイト設定のデモ用のダミー（§6.4）。ログイン不要 |
+| `GET /api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/sites/{id}/gsc`・`/api/demo/bing/keys`・`/api/demo/bing/keys/{id}/sites` | サイト設定のデモ用のダミー（§6.4）。ログイン不要 |
 
 ### 6.1 `GET /api/realtime`
 
@@ -213,32 +215,69 @@ glance/
 - `queries`・`pages` は、サイトごとにクリックの多い順で100件まで。`compare_clicks` は、比べる期間のクリック。比べる期間の100件に入っていないものは `null`。
 - Bing のとき: 日ごとの `position` は `null`（`totals` の `position` も `null`）。`queries` は空（今は取らない。[data_sources.md](data_sources.md) §4）。`crawl` に日ごとの `{"date", "crawled", "indexed", "errors"}` を入れる（`indexed` はその日の在庫なので足さない）。Google のときの `crawl` は `null`。
 
-### 6.4 サイト設定の紐づけと、デモの API
+### 6.4 サイト設定の紐づけ（Search Console・Bing）と、デモの API
 
-サイト設定は、GA4・Search Console・Bing の列を並べる。Search Console は、GA4 のプロパティを追加するときに一緒に紐づける（[screen_design.md](screen_design.md) §4）。画面はデモで先に作った（2026-11-27）。
+サイト設定は、GA4・Search Console・Bing の列を並べる。Search Console は、GA4 のプロパティを追加するときに一緒に紐づける（[screen_design.md](screen_design.md) §4）。紐づけ先（URL）は `sites` に、どの認証で呼ぶか（Google は利用者、Bing はキー）は `connections` に、Bing のキーは `bing_keys` に持つ（[database_design.md](database_design.md) §2）。コードは `glance/sites/links.py`。
 
-**応答の形**（本物とデモで同じ）
+**Search Console**
 
-- `GET /api/sites` の各サイトに `links`（`{"gsc_site_url": "sc-domain:…" | null, "bing_site_url": "https://…/" | null}`）。紐づけの API があるときだけ入れる。本物は、紐づけの保存（下）を作るまで `null` を返し、画面は Search Console・Bing の列を出さない。
-- `GET /api/ga4/properties` の各プロパティに `search_console`（`{"site_url": 同じドメインのサイト | null, "candidates": [選べるサイト]}`）。追加済みのプロパティは `null`。本物は、作るまで `null`。
-- `GET /api/gsc/sites`: ログインしたアカウントが見られる Search Console のサイトの一覧（`["sc-domain:…", "https://…/"]`）。
-- `GET /api/bing/sites`: `{"key_saved": true, "sites": ["https://…/"]}`。保存済みの API キーで見られる Bing のサイト。キーそのものは返さない。
+- `GET /api/sites` の各サイトに `links`（`{"gsc_site_url", "bing_site_url", "bing_key_id"}`。紐づけていなければ `null`）。
+- `GET /api/ga4/properties` の、追加していないプロパティに `search_console`（`{"site_url": 同じドメインのサイト | null, "candidates": [見られるサイト]}`）。追加済みと、Search Console のサイトの一覧を取れないとき（API を有効にしていないなど）は `null`。このときも GA4 のプロパティの追加はできる。
+- `POST /api/sites` に `gsc_site_url`（任意）。見られるサイトでなければ 400（`unknown_gsc_site`）で、サイトも作らない。
+- `GET /api/sites/{id}/gsc`: `{"current", "suggested", "candidates"}`。`suggested` は同じドメインのサイト。
+- `PUT /api/sites/{id}/gsc`: `{"site_url": "…" | null}`。`null` で外す（取り込んだ数字は残す）。接続設定は、保存した利用者の更新トークンで呼ぶ形にする。
+- 同じドメインのサイトの選び方（`match_gsc_site`）: Admin API の `properties.dataStreams.list` でウェブのデータストリームのホストを取り、Search Console API の `sites.list`（確認していないサイトは除く）から選ぶ。ドメインのプロパティ（`sc-domain:`）を優先し（いくつか合うときは細かいほう）、なければ同じホスト（`www.` の有無は問わない）の URL のプロパティが1つだけのときに選ぶ（[data_sources.md](data_sources.md) §3）。
+- Search Console API は REST（`https://www.googleapis.com/webmasters/v3/sites`）を httpx で呼ぶ。API を有効にしていないと 503（`gsc_api_disabled`）で、GCP のプロジェクトで有効にするよう出す。
 
-**デモ**（`/api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/gsc/sites`・`/api/demo/bing/sites`。`glance/sites/demo.py`）
+**Bing**
 
-- ログイン不要。デモのサイト設定（[screen_design.md](screen_design.md) §6）が使う。
-- サイトは「デモサイト A〜E」（`glance/google/fake.py` の `DEMO_SITES`）で、Search Console と Bing を紐づけ済み。ドメインは `demo-a.example` など（`.example` は例のために取ってあるもので、実在しない）。プロパティは、その5つ（追加済み）と、未追加で Search Console のサイトが見つからない「デモサイト F」。
+- `GET /api/bing/keys`: 顧客のキーの一覧 `[{"id", "name", "last4"}]`。キーそのものは返さない。
+- `POST /api/bing/keys`: `{"name", "key"}`。保存の前に `GetUserSites` を呼んで使えるキーか確かめる（使えなければ 400 `invalid_bing_key`）。同じ名前は 409（`name_taken`）。キーは Fernet で暗号化して入れる（§5 と同じ鍵）。
+- `PUT /api/bing/keys/{id}`: `{"key"}`。入れ直し。そのキーを使う全サイトに効く。
+- `GET /api/bing/keys/{id}/sites`: そのキーで見られる（確認済みの）サイトの URL。
+- `PUT /api/sites/{id}/bing`: `{"key_id", "site_url"}`。キーで見られるサイトでなければ 400（`unknown_bing_site`）。`site_url` が `null` で外す（取り込んだ数字とキーは残す）。
+- Bing の API はキーをクエリ文字列で送る仕様なので、URL をログ・エラーに出さない（httpx のログは WARNING 以上にし、通信の失敗は元の例外をつなげずに変換する）。
+
+**デモ**（`/api/demo/sites`・`/api/demo/ga4/properties`・`/api/demo/sites/{id}/gsc`・`/api/demo/bing/keys`・`/api/demo/bing/keys/{id}/sites`。`glance/sites/demo.py`）
+
+- ログイン不要。デモのサイト設定（[screen_design.md](screen_design.md) §6）が使う。応答の形は本物と同じ。
+- サイトは「デモサイト A〜E」（`glance/google/fake.py` の `DEMO_SITES`）で、Search Console と Bing（キーは「デモのキー」1つ）を紐づけ済み。ドメインは `demo-a.example` など（`.example` は例のために取ってあるもので、実在しない）。プロパティは、その5つ（追加済み）と、未追加で Search Console のサイトが見つからない「デモサイト F」。
 - 書き込みの API はない（デモのサイト設定は見るだけ）。DB・Google・Bing・利用者のデータには触れない（テストで確かめる）。
 
-**本物で作るもの**（[roadmap.md](roadmap.md) §3.1）
+**手元・テスト**: フェイクモードでは、Search Console のサイトの一覧とデータストリームはダミー（`glance/google/fake.py`）、Bing は `FakeBingClient`（「bad」で始まるキーを使えないキーとする）。フェイクモードでも Bing のキーを保存するには `GLANCE_TOKEN_KEY` が要る。
 
-- `connections` に紐づけ先の列（Search Console のサイト URL・Bing のサイト URL）を足す。Bing の API キーは利用者ごとに1つで、暗号化して持つ（[database_design.md](database_design.md) §2）。
-- 同じドメインの Search Console のサイトを選ぶ: GA4 の Admin API でプロパティのウェブのデータストリームの URL を取り（`properties.dataStreams.list`）、Search Console API のサイト一覧（`sites.list`）から、`sc-domain:そのドメイン` かそのドメインの URL のサイトを探す。1つだけ見つかったときに選んでおく。
-- 書き込み: サイトの追加で Search Console のサイトも受け取る、Search Console・Bing の紐づけの保存、Bing の API キーの保存（入れ直し）と「見る」。
+### 6.5 取り込み（`python -m glance.sync`）と `GET /api/seo`
+
+**取り込みのコマンド**（`glance/sync/`。VPS に出すまでは手元で打つ。[roadmap.md](roadmap.md) §3.1）
+
+```
+uv run python -m glance.sync                 # 紐づけた全サイトの GSC と Bing
+uv run python -m glance.sync --source bing   # Bing だけ（gsc も選べる）
+uv run python -m glance.sync --site 1        # サイトを絞る（何度でも）
+```
+
+- 接続先と鍵は `.env` から読む（API と同じ）。GSC は、紐づけた利用者の更新トークンで呼ぶ。Bing は、紐づけたキーで呼ぶ。
+- **GSC**: 表（`gsc_site`・`gsc_page`・`gsc_query_page`）ごとに、取得済みの最終日の3日前から今日まで、1日ずつ取る。初めては16ヶ月前の月初から。1日分は消してから入れ直す。1回の取得は2.5万行までで、超える日は続きを取る。途中で失敗したら、その表はそこで止める（次回は取得済みの最終日から続ける。数字が1日もない期間（サイトを始める前など）は、前回までに取り終えた日から続ける）。サイトと表は並べて取るが、Search Console を同時に呼ぶのは3つまでにする（上限は利用者ごとに1分1,200回）。上限に当たったら（429、または 403 の `rateLimitExceeded` など）、15秒・30秒・60秒…と待って5回までやり直す。失敗したときは、API が返したエラーの文を取得ログに残す。
+- **GSC のクエリの整理**: 取り込みの後に、翌月8日を過ぎた月のうち、今回取った月とまだ整理していない月について、その月の表示回数が10回未満のクエリを `gsc_query_page` から消す。整理した月は取得ログ（`gsc_query_cleanup`）に残す。
+- **サイトマップ**: GSC の表の後に、Search Console に登録したサイトマップ（`sitemaps.list`）を読み、載っている URL のパスで `sitemap_urls` を入れ替える（`glance/sync/sitemap.py`。索引はたどり、.gz も読む。上限はファイル500・URL 20万・1ファイル50MB）。サイトマップの取得は、サイトに直接 HTTP で行う。登録が無い・読めないときは失敗として取得ログに残し、前の URL のままにする。
+- **Bing**: `GetRankAndTrafficStats`・`GetPageStats`・`GetCrawlStats` は日付を選べず、取れる範囲を全部返すので、毎回全部を上書きする（同じ日・週は書き換え）。
+- **値のそろえ方**（[database_design.md](database_design.md) §7）: ページは URL をパスに（そろえて同じパスになった行は足し合わせる）、国は3文字を2文字に（分からない国は `(not set)`）、デバイスは小文字、Bing の日付は `/Date(…)/` を日付に。
+- 表・ソースごとに取得ログ（`sync_runs`）を残し、1行ずつ結果を出す。失敗があれば終了コードは 1。
+- 1回目（2026-11-27、手元）: Bing は5サイトとも数秒で終わる。GSC の16ヶ月分は時間がかかる（API を1日1回ずつ呼ぶため）。最初は5サイト×3表を同時に呼んで上限に当たり、全部失敗した（エラーは 403）。同時に呼ぶ数を絞り、上限に当たったら待ってやり直す形にした。
+
+**`GET /api/seo`**（`glance/seo/service.py`。ログインが要る。引数と応答の形は §6.3 のデモと同じ）
+
+- サイトは、その検索エンジンを紐づけたものだけ（Google は Search Console、Bing は Bing）。
+- `data_until` は取り込んだ数字がある最終日（GSC は `gsc_site`、Bing は `bing_site_daily` の最新の日）。まだ何も取り込んでいなければ `null` で、期間は既定の最終日（GSC は今日の3日前、Bing は前日）で決める。
+- 合計と日ごとは `gsc_site`（Bing は `bing_site_daily`）から。期間の全部の日を並べ、数字のない日は 0 にする。掲載順位は表示回数の重みつき平均。
+- クエリは `gsc_query_page`、ページは `gsc_page`（Bing は `bing_page_weekly`。週の日付が期間に入る週）を足し、サイトごとにクリックの多い順に100件。ページのタイトルは持っていないので `null`（GA4 の取り込みを作るまで。画面はパスを出す）。
+- `compare_clicks`: 比べる期間に、そのサイトの数字が1日もなければ `null`（比べられない）。あれば、無いクエリ・ページは 0。
+- サイトごとに `index`（インデックスの目安）を付ける: `{"sitemap_urls": サイトマップの URL 数 | null（まだ読めていない）, "sitemap_checked_at", "indexed", "pages_shown", "daily"}`。`indexed` は、Google は期間中に imp 1回以上のページのうちサイトマップにあるものの数（サイトマップを読めていなければ `null`）、Bing は `bing_crawl_daily` の期間の中で数字のある最後の日のインデックス数。`pages_shown`（サイトマップに無いものも含めた数）と `daily`（`[{"date", "pages"}]` 日ごとの検索に出たページ数）は Google だけで、Bing は `null`。デモも同じ形。
+- Bing のクロールとインデックスは `bing_crawl_daily` から。期間の全部の日を並べ、数字のない日は `null`（インデックス数は在庫なので 0 にしない）。
 
 ## 7. 画面（Next.js）
 
-- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/settings/sites`・`/demo`（デモのリアルタイム）・`/demo/seo`（デモの SEO）・`/demo/settings/sites`（デモのサイト設定）の6つ。デモの3つはログイン不要。中身は [screen_design.md](screen_design.md)。
+- 静的書き出しで、ページは `/login`・`/`（リアルタイム）・`/seo`・`/settings/sites`・`/demo`（デモのリアルタイム）・`/demo/seo`（デモの SEO）・`/demo/settings/sites`（デモのサイト設定）の7つ。デモの3つはログイン不要。中身は [screen_design.md](screen_design.md)。
 - データは、画面から `/api` を呼んで取る（ブラウザ側）。401 が返ったら `/login` へ移す（`reauth_required` のときは、理由を出してから移す）。
 - 画面に出す文字は、すべて React が描く（エスケープされる）。`dangerouslySetInnerHTML` は使わない（[overview.md](overview.md) §5）。
 

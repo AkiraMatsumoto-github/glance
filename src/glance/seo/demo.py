@@ -25,14 +25,17 @@ class DemoSite:
     position: float
     indexed: int  # Bing のインデックス数の目安
     slug: str
+    sitemap: int  # サイトマップの URL 数
+    shown: float  # サイトマップのうち、28日間に検索に出るページの割合の目安（Google）
 
 
 SITES = [
-    DemoSite(1, "デモサイト A", 11000, 0.026, 11.8, 3200, "a"),
-    DemoSite(2, "デモサイト B", 3000, 0.024, 17.9, 900, "b"),
-    DemoSite(3, "デモサイト C", 1500, 0.017, 20.4, 1200, "c"),
-    DemoSite(4, "デモサイト D", 450, 0.018, 24.8, 300, "d"),
-    DemoSite(5, "デモサイト E", 1300, 0.036, 11.5, 2500, "e"),
+    # Bing のインデックス数は、日がたつほど増える（2026年の終わりに約1.26倍）。サイトマップの URL より少なくなるようにする
+    DemoSite(1, "デモサイト A", 11000, 0.026, 11.8, 2600, "a", 3400, 0.82),
+    DemoSite(2, "デモサイト B", 3000, 0.024, 17.9, 800, "b", 1100, 0.64),
+    DemoSite(3, "デモサイト C", 1500, 0.017, 20.4, 900, "c", 1400, 0.47),
+    DemoSite(4, "デモサイト D", 450, 0.018, 24.8, 250, "d", 420, 0.31),
+    DemoSite(5, "デモサイト E", 1300, 0.036, 11.5, 2000, "e", 2600, 0.76),
 ]
 
 BING_SCALE = 0.09  # Bing の表示回数は Google のおよそ1割
@@ -148,6 +151,23 @@ def _crawl(site: DemoSite, r: Range) -> list[dict[str, Any]]:
     return rows
 
 
+def _index(site: DemoSite, engine: Engine, r: Range, until: date) -> dict[str, Any]:
+    result: dict[str, Any] = {"sitemap_urls": site.sitemap, "sitemap_checked_at": until.isoformat()}
+    if engine == "bing":
+        # Bing のインデックス数は、クロールの数字の期間の最後の日の値（_crawl と同じ数字）
+        return {**result, "indexed": _crawl(site, Range(r.end, r.end))[0]["indexed"], "pages_shown": None, "daily": None}
+    # 期間が長いほど、1回でも検索に出るページは多い。日ごとは、その日に出たページ数
+    share = min(0.98, site.shown * (r.days / 28) ** 0.25)
+    indexed = round(site.sitemap * share)
+    daily = []
+    for d in _days(r):
+        rng = random.Random(f"{site.site_id}:index:{d.isoformat()}")
+        week = 0.8 if d.weekday() >= 5 else 1.0
+        daily.append({"date": d.isoformat(), "pages": round(site.sitemap * site.shown * 0.45 * week * rng.uniform(0.9, 1.1))})
+    # サイトマップに無いのに出たページも少しある
+    return {**result, "indexed": indexed, "pages_shown": indexed + round(site.sitemap * 0.02), "daily": daily}
+
+
 def demo_seo(
     engine: Engine,
     period: PeriodName,
@@ -187,6 +207,7 @@ def demo_seo(
                 "queries": query_rows,
                 "pages": _with_compare(pages, pages_before, "path"),
                 "crawl": _crawl(site, current) if engine == "bing" else None,
+                "index": _index(site, engine, current, until),
             }
         )
     return {

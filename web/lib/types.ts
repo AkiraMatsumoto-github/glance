@@ -2,8 +2,8 @@
 
 export type Me = { email: string };
 
-// Search Console・Bing の紐づけ先。紐づけていないものは null
-export type SiteLinks = { gsc_site_url: string | null; bing_site_url: string | null };
+// Search Console・Bing の紐づけ先と、Bing で使うキー。紐づけていないものは null
+export type SiteLinks = { gsc_site_url: string | null; bing_site_url: string | null; bing_key_id: number | null };
 
 export type Site = {
   id: number;
@@ -11,8 +11,7 @@ export type Site = {
   sort_order: number;
   timezone: string;
   ga4_property_id: string | null;
-  // 紐づけの API があるときだけ入る（今はデモだけ。本物は null）
-  links: SiteLinks | null;
+  links: SiteLinks;
 };
 
 // GA4 のプロパティと同じドメインの Search Console のサイト（見つからなければ null）と、選べるサイト
@@ -21,10 +20,13 @@ export type GaProperty = {
   property_id: string;
   name: string;
   added: boolean;
-  search_console: SearchConsoleMatch | null; // 紐づけの API があるときだけ入る（今はデモだけ）
+  // 追加済みのとき・Search Console のサイトの一覧を取れないとき（API を有効にしていないなど）は null
+  search_console: SearchConsoleMatch | null;
 };
-// Bing の API キーを保存済みか（キーそのものは返さない）と、そのキーで見られるサイト
-export type BingSites = { key_saved: boolean; sites: string[] };
+// サイトの Search Console の紐づけ先（current）、同じドメインのサイト（suggested）、選べるサイト
+export type GscChoice = { current: string | null; suggested: string | null; candidates: string[] };
+// Bing の API キー。キーそのものは返らず、名前と末尾4文字だけ
+export type BingKey = { id: number; name: string; last4: string };
 export type GaAccount = { account_id: string; name: string; properties: GaProperty[] };
 
 export type Totals = { page_views: number; active_users: number; key_events: number };
@@ -66,12 +68,26 @@ export type SeoCompareName = "previous_period" | "previous_year" | "none";
 
 export type SeoTotals = { clicks: number; impressions: number; position: number | null };
 export type SeoDay = SeoTotals & { date: string };
-// compare_clicks は、比べる期間のクリック。比べないとき・比べる期間の上位に入っていないときは null
-type SeoItem = { clicks: number; impressions: number; position: number; compare_clicks: number | null };
+// compare_clicks は、比べる期間のクリック。比べないとき・比べる期間に数字がないときは null。
+// position は、表示回数の重みつき平均（Bing で順位が分からないものは null）
+type SeoItem = { clicks: number; impressions: number; position: number | null; compare_clicks: number | null };
 export type SeoQuery = SeoItem & { query: string };
-export type SeoPage = SeoItem & { title: string; path: string };
-// indexed はその日のインデックス数（在庫なので足さない）
-export type CrawlDay = { date: string; crawled: number; indexed: number; errors: number };
+// 本物はページのタイトルを持っていない（GA4 の取り込みを作るまで null。パスを出す）
+export type SeoPage = SeoItem & { title: string | null; path: string };
+// indexed はその日のインデックス数（在庫なので足さない）。数字のない日は null
+export type CrawlDay = { date: string; crawled: number | null; indexed: number | null; errors: number | null };
+
+// インデックスの目安。サイトマップの URL 数（まだ読めていなければ null）と並べる。
+// indexed は、Google は期間中に検索に1回でも出た（imp 1回以上の）ページのうちサイトマップにあるものの数
+// （サイトマップを読めていなければ null）、Bing は Bing のインデックス数（期間の最後の日）。
+// pages_shown（サイトマップに無いものも含めた数）と daily（日ごとの検索に出たページ数）は Google だけ
+export type SeoIndex = {
+  sitemap_urls: number | null;
+  sitemap_checked_at: string | null;
+  indexed: number | null;
+  pages_shown: number | null;
+  daily: { date: string; pages: number }[] | null;
+};
 
 export type SeoSite = {
   site_id: number;
@@ -84,12 +100,13 @@ export type SeoSite = {
   queries: SeoQuery[];
   pages: SeoPage[];
   crawl: CrawlDay[] | null;
+  index: SeoIndex | null;
 };
 
 export type Seo = {
   engine: SeoEngine;
   period: { name: SeoPeriodName; label: string; start: string; end: string };
   compare: { name: SeoCompareName; start: string; end: string } | null;
-  data_until: string;
+  data_until: string | null; // 取り込んだ数字がある最終日。まだ何も取り込んでいなければ null
   sites: SeoSite[];
 };

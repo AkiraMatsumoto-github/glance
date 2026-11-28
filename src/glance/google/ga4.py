@@ -1,9 +1,10 @@
-"""GA4 の呼び出しの入口。
+"""Google（GA4 と Search Console）の呼び出しの入口。
 
-本物は glance.google.real（Data API・Admin API）、手元とテスト用のダミーは glance.google.fake。
+本物は glance.google.real（Data API・Admin API・Search Console API）、手元とテスト用のダミーは glance.google.fake。
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal, Protocol
 
 
@@ -17,6 +18,10 @@ class Ga4PermissionDenied(Exception):
 
 class Ga4QuotaExceeded(Exception):
     """GA4 の API の上限に当たった。"""
+
+
+class GscApiDisabled(Exception):
+    """Search Console API が、ログインに使う GCP のプロジェクトで有効になっていない。"""
 
 
 @dataclass(frozen=True)
@@ -73,13 +78,23 @@ class BreakdownRow:
 
 
 @dataclass(frozen=True)
+class GscRow:
+    """Search Console の検索パフォーマンスの1行。keys は、頼んだ軸（dimensions）の順の値。"""
+
+    keys: list[str]
+    clicks: int
+    impressions: int
+    position: float
+
+
+@dataclass(frozen=True)
 class EventRow:
     name: str  # イベント名（page_view、独自のイベントなど）
     event_count: int
 
 
 class Ga4Client(Protocol):
-    """1人の利用者の権限で GA4 を呼ぶ。"""
+    """1人の利用者の権限で GA4（と Search Console のサイトの一覧）を呼ぶ。"""
 
     async def list_account_summaries(self) -> list[AccountSummary]:
         """見られるアカウントとプロパティの一覧（Admin API の accountSummaries.list）。"""
@@ -87,6 +102,27 @@ class Ga4Client(Protocol):
 
     async def get_property(self, property_id: str) -> PropertyInfo:
         """プロパティの名前とタイムゾーン（Admin API の properties.get）。"""
+        ...
+
+    async def web_stream_hosts(self, property_id: str) -> list[str]:
+        """プロパティのウェブのデータストリームのホスト（Admin API の properties.dataStreams.list）。
+
+        Search Console のサイトを同じドメインで選ぶのに使う（data_sources.md §3）。
+        """
+        ...
+
+    async def list_gsc_sites(self) -> list[str]:
+        """見られる Search Console のサイト（Search Console API の sites.list）。確認していないサイトは除く。"""
+        ...
+
+    async def gsc_sitemaps(self, site_url: str) -> list[str]:
+        """Search Console に登録したサイトマップの URL（sitemaps.list）。"""
+        ...
+
+    async def gsc_search_analytics(
+        self, site_url: str, start: date, end: date, dimensions: list[str], start_row: int, row_limit: int
+    ) -> list[GscRow]:
+        """検索パフォーマンス（searchAnalytics.query。検索タイプは web、確定データのみ。data_sources.md §3）。"""
         ...
 
     async def realtime_totals(self, property_id: str) -> Totals:

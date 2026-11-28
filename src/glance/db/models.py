@@ -1,8 +1,9 @@
-"""テーブルの定義（database_design.md §2。1番目の段階で作る5つ）。"""
+"""テーブルの定義（database_design.md §2）。"""
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -64,8 +65,30 @@ class Site(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class BingKey(Base):
+    """Bing の API キー。顧客ごとに複数持て、サイトごとにどれを使うか選ぶ（data_sources.md §4）。
+
+    キーそのものは画面に出さず、名前と末尾4文字だけを出す。
+    """
+
+    __tablename__ = "bing_keys"
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    key_encrypted: Mapped[str] = mapped_column(Text)  # Fernet で暗号化したもの
+    last4: Mapped[str] = mapped_column(String(4))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Connection(Base):
-    """データ接続。Google ログインのときは、どの利用者の更新トークンで API を呼ぶかを持つ。"""
+    """データ接続。ソースごとに1行で、紐づけを外すと消す。紐づけ先（URL）は sites に持つ。
+
+    Google（GA4・Search Console）は、どの利用者の更新トークンで API を呼ぶかを持つ。
+    Bing は、どのキーで API を呼ぶかを持つ。
+    """
 
     __tablename__ = "connections"
     __table_args__ = (UniqueConstraint("site_id", "source"),)
@@ -75,5 +98,125 @@ class Connection(Base):
     source: Mapped[str] = mapped_column(String(16))  # ga4 / gsc / bing
     auth_method: Mapped[str] = mapped_column(String(16))  # google / api_key
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    credentials_encrypted: Mapped[str | None] = mapped_column(Text)  # Bing の API キーなど
+    bing_key_id: Mapped[int | None] = mapped_column(ForeignKey("bing_keys.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- 取り込み（data_sources.md §1・§3・§4、database_design.md §4・§5） ---------------------------
+# どのデータの表も、サイトを削除したら一緒に消す（database_design.md §2）。紐づけを外しても消さない
+
+
+def _site_fk() -> Mapped[int]:
+    return mapped_column(ForeignKey("sites.id", ondelete="CASCADE"), primary_key=True)
+
+
+class SyncRun(Base):
+    """取得ログ。サイト・ソース・表・対象期間・行数・成否。画面の「◯月◯日までのデータ」と、次に取る範囲に使う。"""
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(16))  # gsc / bing
+    table_name: Mapped[str] = mapped_column(String(64))
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class _GscMetrics:
+    """GSC の指標。掲載順位は「順位×表示回数」も持ち、集計では表示回数の重みつき平均にする（database_design.md §6）。"""
+
+    clicks: Mapped[int] = mapped_column(Integer)
+    impressions: Mapped[int] = mapped_column(Integer)
+    position: Mapped[float] = mapped_column(Float)
+    position_weighted: Mapped[float] = mapped_column(Float)
+
+
+class GscSite(_GscMetrics, Base):
+    """サイト全体（日付×国×デバイス）。サイト全体の数字はここから出す（database_design.md §4）。"""
+
+    __tablename__ = "gsc_site"
+
+    site_id: Mapped[int] = _site_fk()
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    country: Mapped[str] = mapped_column(String(16), primary_key=True)
+    device: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+
+class GscPage(_GscMetrics, Base):
+    """ページ（日付×ページ×デバイス）。ページはパスにそろえる（database_design.md §7）。"""
+
+    __tablename__ = "gsc_page"
+
+    site_id: Mapped[int] = _site_fk()
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    page: Mapped[str] = mapped_column(Text, primary_key=True)
+    device: Mapped[str] = mapped_column(String(16), primary_key=True)
+
+
+class GscQueryPage(_GscMetrics, Base):
+    """クエリ×ページ（日付）。伏せられたクエリと、月ごとに整理した少ないクエリは入らない（data_sources.md §3）。"""
+
+    __tablename__ = "gsc_query_page"
+
+    site_id: Mapped[int] = _site_fk()
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    query: Mapped[str] = mapped_column(Text, primary_key=True)
+    page: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class BingSiteDaily(Base):
+    """Bing のサイト全体の日次（GetRankAndTrafficStats）。raw は API が返した1件そのもの（後から取り直せないため）。"""
+
+    __tablename__ = "bing_site_daily"
+
+    site_id: Mapped[int] = _site_fk()
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    clicks: Mapped[int] = mapped_column(Integer)
+    impressions: Mapped[int] = mapped_column(Integer)
+    raw: Mapped[dict] = mapped_column(JSONB)
+
+
+class BingPageWeekly(Base):
+    """Bing のページ別の週次（GetPageStats。上位100ページのみ）。week は API が返す週の日付。"""
+
+    __tablename__ = "bing_page_weekly"
+
+    site_id: Mapped[int] = _site_fk()
+    week: Mapped[date] = mapped_column(Date, primary_key=True)
+    page: Mapped[str] = mapped_column(Text, primary_key=True)
+    clicks: Mapped[int] = mapped_column(Integer)
+    impressions: Mapped[int] = mapped_column(Integer)
+    position: Mapped[float | None] = mapped_column(Float)  # 表示されたときの平均掲載順位
+    raw: Mapped[dict] = mapped_column(JSONB)
+
+
+class BingCrawlDaily(Base):
+    """Bing のクロールの日次（GetCrawlStats）。インデックス数・被リンク数はその日の在庫なので足さない。"""
+
+    __tablename__ = "bing_crawl_daily"
+
+    site_id: Mapped[int] = _site_fk()
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    crawled: Mapped[int] = mapped_column(Integer)
+    indexed: Mapped[int] = mapped_column(Integer)
+    backlinks: Mapped[int] = mapped_column(Integer)
+    crawl_errors: Mapped[int] = mapped_column(Integer)
+    raw: Mapped[dict] = mapped_column(JSONB)
+
+
+class SitemapUrl(Base):
+    """サイトマップに載っている URL（パスにそろえる）。取り込みのたびに入れ替える（前回読めなかったら前のまま）。
+
+    検索に出たページ（gsc_page で imp 1回以上）と突き合わせて、インデックスの目安を出す（screen_design.md §7）。
+    """
+
+    __tablename__ = "sitemap_urls"
+
+    site_id: Mapped[int] = _site_fk()
+    path: Mapped[str] = mapped_column(Text, primary_key=True)

@@ -64,7 +64,8 @@ export function SeoCards({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         {sites.map((site) => {
           const checked = selected.includes(site);
-          const lastIndexed = site.crawl?.at(-1)?.indexed;
+          // インデックス数は在庫なので、期間の中で数字のある最後の日の値（取り込んでいない日は null）
+          const lastIndexed = site.crawl?.findLast((day) => day.indexed !== null)?.indexed ?? undefined;
           return (
             <div key={site.site_id} className={cn(CARD_CLICKABLE, "flex min-w-0 flex-col gap-3 p-4")}>
               <Toggle

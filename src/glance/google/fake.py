@@ -9,6 +9,7 @@ import asyncio
 import random
 import time
 from collections.abc import Callable
+from datetime import date
 
 from glance.google.ga4 import (
     AccountSummary,
@@ -16,6 +17,7 @@ from glance.google.ga4 import (
     BreakdownRow,
     EventRow,
     Ga4PermissionDenied,
+    GscRow,
     MinuteRow,
     PageRow,
     PropertyInfo,
@@ -37,6 +39,24 @@ _ACCOUNTS = [
     ("800000002", "ダミーのアカウント 2", ["900000004", "900000005", "900000099"]),
 ]
 ERROR_PROPERTY_ID = "900000099"
+
+# ウェブのデータストリームのホストと、見られる Search Console のサイト（.example は実在しないドメイン）。
+# 同じドメインのサイトの選び方（data_sources.md §3）を一通り試せるようにする:
+# LogiShift はドメインと URL の両方（ドメインを選ぶ）、TechShift は URL だけ、ConShift は無し
+_HOSTS = {
+    "900000001": "www.logishift.example",
+    "900000002": "techshift.example",
+    "900000003": "conshift.example",
+    "900000004": "finshift.example",
+    "900000005": "leadhub.example",
+}
+FAKE_GSC_SITES = [
+    "https://techshift.example/",
+    "https://www.logishift.example/",
+    "sc-domain:finshift.example",
+    "sc-domain:leadhub.example",
+    "sc-domain:logishift.example",
+]
 
 # デモ（ログインしない人に見せる画面）のサイト。実在のサイト名でダミーの数字を出すと本物と誤解されうるので、
 # 名前は「デモサイト A〜E」にする。数字はダミーのプロパティ（エラー確認用を除く）から作る
@@ -122,6 +142,28 @@ class FakeGa4Client:
         await self._wait()
         name, _ = self._property(property_id)
         return PropertyInfo(property_id=property_id, name=name, time_zone="Asia/Tokyo")
+
+    async def web_stream_hosts(self, property_id: str) -> list[str]:
+        await self._wait()
+        self._property(property_id)
+        return [_HOSTS[property_id]] if property_id in _HOSTS else []
+
+    async def list_gsc_sites(self) -> list[str]:
+        await self._wait()
+        return list(FAKE_GSC_SITES)
+
+    async def gsc_sitemaps(self, site_url: str) -> list[str]:
+        await self._wait()
+        host = site_url.removeprefix("sc-domain:").removeprefix("https://").removesuffix("/")
+        return [f"https://{host}/sitemap_index.xml"]
+
+    async def gsc_search_analytics(
+        self, site_url: str, start: date, end: date, dimensions: list[str], start_row: int, row_limit: int
+    ) -> list[GscRow]:
+        # 1日ずつの決まった数字。日付・国・デバイス・ページ・クエリの組み合わせを、軸の数だけ作る
+        await self._wait()
+        rows = [row for day in range((end - start).days + 1) for row in _fake_gsc_rows(site_url, start.toordinal() + day, dimensions)]
+        return rows[start_row : start_row + row_limit]
 
     def _minutes(self, property_id: str) -> list[MinuteRow]:
         _, rate = self._property(property_id)
@@ -229,3 +271,31 @@ class FakeGa4Client:
         result = [EventRow(name, count) for name, count in counts.items() if count > 0]
         result.sort(key=lambda r: r.event_count, reverse=True)
         return result[:limit]
+
+
+_GSC_VALUES = {
+    "country": ["jpn", "usa", "zzz"],
+    "device": ["MOBILE", "DESKTOP"],
+    "page": ["/", "/glossary/wms/", "/news/2024-problem/", "/tools/%E5%80%89%E5%BA%AB/"],
+    "query": ["wms とは", "2024年問題", "倉庫 管理", "物流 dx"],
+}
+
+
+def _fake_gsc_rows(site_url: str, ordinal: int, dimensions: list[str]) -> list[GscRow]:
+    day = date.fromordinal(ordinal)
+    combos: list[list[str]] = [[]]
+    for dim in dimensions:
+        if dim == "date":
+            values = [day.isoformat()]
+        elif dim == "page":
+            host = site_url.removeprefix("sc-domain:").removeprefix("https://").removesuffix("/")
+            values = [f"https://{host}{path}" for path in _GSC_VALUES["page"]]
+        else:
+            values = _GSC_VALUES[dim]
+        combos = [combo + [value] for combo in combos for value in values]
+    rows = []
+    for keys in combos:
+        rng = random.Random(f"{site_url}:{'|'.join(keys)}")
+        impressions = rng.randint(5, 400)
+        rows.append(GscRow(keys=keys, clicks=rng.randint(0, impressions // 8), impressions=impressions, position=round(rng.uniform(1, 30), 1)))
+    return rows

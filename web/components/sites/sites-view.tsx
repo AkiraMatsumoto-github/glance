@@ -19,11 +19,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
-import type { GaAccount, Site } from "@/lib/types";
+import type { GaAccount, GaProperty, Site } from "@/lib/types";
 
 // サイト設定の中身（docs/01_design/screen_design.md §4・§6）。
 // 本物は /api のサイトを扱う。デモは /api/demo のダミーを見るだけで、追加・名前・並び・削除・紐づけはできない。
-// Search Console・Bing の列は、API が紐づけ（links）を返すときだけ出す（今はデモだけ）。
 // GA4・Search Console・Bing は、見やすさのため列を分ける
 export function SitesView({ demo = false }: { demo?: boolean }) {
   const base = demo ? "/api/demo" : "/api";
@@ -61,7 +60,6 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
   const move = (site: Site, position: number) =>
     run(() => api(`/api/sites/${site.id}`, { method: "PATCH", json: { position } }));
 
-  const linking = sites?.some((s) => s.links !== null) ?? false;
 
   return (
     <>
@@ -88,14 +86,14 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
             </p>
           ) : (
             // スマホでは名前の欄が潰れないよう、表に最小の幅を付けて横にスクロールさせる（ほかの表と同じ）
-            <Table className={linking ? "min-w-[800px]" : "min-w-[560px]"}>
+            <Table className="min-w-[800px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-24 pl-4">並び</TableHead>
                   <TableHead className="w-72">名前</TableHead>
                   <TableHead>GA4</TableHead>
-                  {linking && <TableHead>Search Console</TableHead>}
-                  {linking && <TableHead>Bing</TableHead>}
+                  <TableHead>Search Console</TableHead>
+                  <TableHead>Bing</TableHead>
                   <TableHead className="w-20 pr-4" />
                 </TableRow>
               </TableHeader>
@@ -132,16 +130,12 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
                       <NameInput key={site.name} site={site} readOnly={demo} onSave={(name) => rename(site, name)} />
                     </TableCell>
                     <TableCell className="tabular-nums">{site.ga4_property_id}</TableCell>
-                    {linking && (
-                      <TableCell>
-                        <LinkCell url={site.links?.gsc_site_url ?? null} onEdit={() => setGscSite(site)} />
-                      </TableCell>
-                    )}
-                    {linking && (
-                      <TableCell>
-                        <LinkCell url={site.links?.bing_site_url ?? null} onEdit={() => setBingSite(site)} />
-                      </TableCell>
-                    )}
+                    <TableCell>
+                      <LinkCell url={site.links.gsc_site_url} onEdit={() => setGscSite(site)} />
+                    </TableCell>
+                    <TableCell>
+                      <LinkCell url={site.links.bing_site_url} onEdit={() => setBingSite(site)} />
+                    </TableCell>
                     <TableCell className="pr-4 text-right">
                       <Locked demo={demo}>
                         <Button variant="destructive" size="sm" disabled={demo} onClick={() => setDeleting(site)}>
@@ -167,14 +161,17 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
           }}
         />
 
-        <GscDialog site={gscSite} url={`${base}/gsc/sites`} demo={demo} onClose={() => setGscSite(null)} />
-        <BingDialog site={bingSite} url={`${base}/bing/sites`} demo={demo} onClose={() => setBingSite(null)} />
+        <GscDialog site={gscSite} base={base} demo={demo} onClose={() => setGscSite(null)} onSaved={load} />
+        <BingDialog site={bingSite} base={base} demo={demo} onClose={() => setBingSite(null)} onSaved={load} />
 
         <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>サイトを削除しますか？</DialogTitle>
-              <DialogDescription>「{deleting?.name}」を削除します。GA4 のデータは消えません。</DialogDescription>
+              <DialogDescription>
+                「{deleting?.name}」を削除します。取り込んだ Search Console・Bing の数字も一緒に消えます。Bing
+                の過去の数字は取り直せません。GA4・Search Console・Bing の側のデータは消えません。
+              </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDeleting(null)}>
@@ -270,7 +267,11 @@ function AddSiteDialog({
   const [accounts, setAccounts] = useState<GaAccount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // プロパティごとに選んだ Search Console のサイト。選んでいなければ、同じドメインのサイト
+  const [gscPicked, setGscPicked] = useState<Record<string, string>>({});
   const withGsc = accounts?.some((a) => a.properties.some((p) => p.search_console !== null)) ?? false;
+  // 追加できるプロパティがあるのに Search Console のサイトの一覧を取れなかった（API を有効にしていないなど）
+  const gscUnavailable = !withGsc && (accounts?.some((a) => a.properties.some((p) => !p.added)) ?? false);
 
   useEffect(() => {
     if (!open) return;
@@ -290,11 +291,18 @@ function AddSiteDialog({
     };
   }, [open, propertiesUrl]);
 
-  async function add(propertyId: string) {
+  function gscValue(p: GaProperty): string {
+    return gscPicked[p.property_id] ?? p.search_console?.site_url ?? "";
+  }
+
+  async function add(p: GaProperty) {
     setBusy(true);
     setError(null);
     try {
-      await api("/api/sites", { method: "POST", json: { property_id: propertyId } });
+      await api("/api/sites", {
+        method: "POST",
+        json: { property_id: p.property_id, gsc_site_url: p.search_console ? gscValue(p) || null : null },
+      });
       await onAdded();
     } catch (e) {
       setError(errorMessage(e));
@@ -314,6 +322,11 @@ function AddSiteDialog({
           </DialogDescription>
         </DialogHeader>
         {error && <Notice>{error}</Notice>}
+        {gscUnavailable && (
+          <Notice kind="warning">
+            Search Console のサイトの一覧を取れませんでした（Search Console API を有効にしていないなど）。追加した後に、表の「設定する」から選べます。
+          </Notice>
+        )}
         <div className="max-h-96 space-y-4 overflow-y-auto">
           {accounts === null && !error && <p className="text-ink-3">読み込み中…</p>}
           {accounts?.length === 0 && <p className="text-ink-3">見られるプロパティがありません。</p>}
@@ -332,21 +345,21 @@ function AddSiteDialog({
                         <span className="w-14 text-right text-xs text-ink-3">追加済み</span>
                       ) : (
                         <Locked demo={demo}>
-                          <Button size="sm" className="w-14" disabled={demo || busy} onClick={() => add(p.property_id)}>
+                          <Button size="sm" className="w-14" disabled={demo || busy} onClick={() => add(p)}>
                             追加
                           </Button>
                         </Locked>
                       )}
                     </div>
-                    {/* 一緒に紐づける Search Console のサイト。初めは同じドメインのもの（なければ「紐づけない」）。
-                        選んだ値を追加と一緒に送るのは、本物の紐づけの API を作るときに足す（今はデモだけが出す） */}
+                    {/* 一緒に紐づける Search Console のサイト。初めは同じドメインのもの（なければ「紐づけない」） */}
                     {!p.added && p.search_console && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
                         <span>Search Console</span>
                         <Locked demo={demo}>
                           <select
                             aria-label={`${p.name}と一緒に紐づける Search Console のサイト`}
-                            defaultValue={p.search_console.site_url ?? ""}
+                            value={gscValue(p)}
+                            onChange={(e) => setGscPicked((prev) => ({ ...prev, [p.property_id]: e.target.value }))}
                             disabled={demo}
                             className="h-7 max-w-64 rounded-md border bg-surface px-2 text-xs text-ink"
                           >

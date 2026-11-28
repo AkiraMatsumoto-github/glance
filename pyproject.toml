@@ -15,6 +15,8 @@ dependencies = [
     "google-auth-oauthlib>=1.5.0",
     "google-analytics-data>=0.23.3",
     "google-analytics-admin>=0.30.2",
+    "httpx>=0.28",
+    "pycountry>=26.2.16",
 ]
 
 [dependency-groups]
