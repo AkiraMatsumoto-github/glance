@@ -3,22 +3,20 @@
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qs, urlparse
 
-import psycopg
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.engine import make_url
 
 from glance.auth import google as google_auth
 from glance.auth.crypto import TokenCipher
 from glance.auth.routes import STATE_COOKIE, VERIFIER_COOKIE
 from glance.main import create_app
-from tests.conftest import EMAIL, TOKEN_KEY, _clean, make_settings
+from tests.conftest import EMAIL, TOKEN_KEY, clean_database, db_query, make_settings
 
 
 @pytest.fixture
 async def google_app(database_url: str) -> AsyncIterator[FastAPI]:
-    _clean(database_url)
+    clean_database(database_url)
     app = create_app(make_settings(database_url, fake_google=False))
     yield app
     await app.state.engine.dispose()
@@ -51,10 +49,6 @@ async def start(client: AsyncClient, query: str = "") -> dict[str, list[str]]:
     return parse_qs(url.query)
 
 
-def db_url(database_url: str) -> str:
-    return make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-
-
 async def test_login_redirects_to_google_with_pkce(gclient: AsyncClient) -> None:
     params = await start(gclient)
     assert params["access_type"] == ["offline"]
@@ -76,8 +70,7 @@ async def test_callback_signs_in_and_stores_encrypted_token(
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     assert (await gclient.get("/api/me")).json() == {"email": EMAIL}
-    with psycopg.connect(db_url(database_url)) as conn:
-        sub, stored, scopes = conn.execute("SELECT google_sub, refresh_token_encrypted, scopes FROM users").fetchone()
+    [(sub, stored, scopes)] = db_query(database_url, "SELECT google_sub, refresh_token_encrypted, scopes FROM users")
     assert sub == "google-sub-1"
     assert stored != "refresh-1"  # 暗号化して入れている
     assert TokenCipher(TOKEN_KEY).decrypt(stored) == "refresh-1"
@@ -107,8 +100,7 @@ async def test_unlisted_email_is_rejected_without_storing(
     state = (await start(gclient))["state"][0]
     response = await gclient.get(f"/api/auth/callback?code=good-code&state={state}")
     assert response.headers["location"] == "/login?error=not_allowed"
-    with psycopg.connect(db_url(database_url)) as conn:
-        assert conn.execute("SELECT count(*) FROM users").fetchone() == (0,)
+    assert db_query(database_url, "SELECT count(*) FROM users") == [(0,)]
 
 
 async def test_unverified_email_is_rejected(gclient: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,8 +129,7 @@ async def test_second_login_keeps_saved_token(
     state = (await start(gclient))["state"][0]
     response = await gclient.get(f"/api/auth/callback?code=good-code&state={state}")
     assert response.headers["location"] == "/"
-    with psycopg.connect(db_url(database_url)) as conn:
-        stored = conn.execute("SELECT refresh_token_encrypted FROM users").fetchone()[0]
+    [(stored,)] = db_query(database_url, "SELECT refresh_token_encrypted FROM users")
     assert TokenCipher(TOKEN_KEY).decrypt(stored) == "refresh-1"
 
 
@@ -148,8 +139,7 @@ async def test_user_without_token_must_reauth(
     fake_google(monkeypatch)
     state = (await start(gclient))["state"][0]
     await gclient.get(f"/api/auth/callback?code=good-code&state={state}")
-    with psycopg.connect(db_url(database_url), autocommit=True) as conn:
-        conn.execute("UPDATE users SET refresh_token_encrypted = NULL")
+    db_query(database_url, "UPDATE users SET refresh_token_encrypted = NULL")
     response = await gclient.get("/api/realtime")
     assert response.status_code == 401
     assert response.json()["code"] == "reauth_required"

@@ -8,8 +8,6 @@ export type SiteLinks = { gsc_site_url: string | null; bing_site_url: string | n
 export type Site = {
   id: number;
   name: string;
-  sort_order: number;
-  timezone: string;
   ga4_property_id: string | null;
   links: SiteLinks;
 };
@@ -92,7 +90,6 @@ export type SeoIndex = {
 export type SeoSite = {
   site_id: number;
   name: string;
-  status: "ok";
   totals: SeoTotals;
   compare_totals: SeoTotals | null;
   daily: SeoDay[];
@@ -100,13 +97,13 @@ export type SeoSite = {
   queries: SeoQuery[];
   pages: SeoPage[];
   crawl: CrawlDay[] | null;
-  index: SeoIndex | null;
+  index: SeoIndex;
 };
 
 export type Seo = {
   engine: SeoEngine;
-  period: { name: SeoPeriodName; label: string; start: string; end: string };
-  compare: { name: SeoCompareName; start: string; end: string } | null;
+  period: { start: string; end: string };
+  compare: { start: string; end: string } | null; // 比べないときは null
   data_until: string | null; // 取り込んだ数字がある最終日。まだ何も取り込んでいなければ null
   sites: SeoSite[];
 };

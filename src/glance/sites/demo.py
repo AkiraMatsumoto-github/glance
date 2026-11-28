@@ -8,7 +8,6 @@
 from glance.errors import AppError
 from glance.google.fake import DEMO_SITES
 
-TIMEZONE = "Asia/Tokyo"
 NOT_ADDED = ("900000006", "デモサイト F")
 
 # GA4 のプロパティ（のウェブのデータストリーム）のドメイン
@@ -28,8 +27,6 @@ def sites() -> list[dict]:
         {
             "id": i + 1,
             "name": name,
-            "sort_order": i,
-            "timezone": TIMEZONE,
             "ga4_property_id": pid,
             "links": {
                 "gsc_site_url": f"sc-domain:{_DOMAINS[pid]}",

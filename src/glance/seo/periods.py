@@ -11,17 +11,16 @@ Engine = Literal["google", "bing"]
 PeriodName = Literal["last_7_days", "last_28_days", "this_month", "last_month", "custom"]
 CompareName = Literal["previous_period", "previous_year", "none"]
 
-PERIOD_LABELS: dict[str, str] = {
-    "last_7_days": "直近7日",
-    "last_28_days": "直近28日",
-    "this_month": "今月",
-    "last_month": "先月",
-    "custom": "指定",
-}
-
 
 class PeriodError(ValueError):
     """期間の指定がおかしい（画面にそのまま出す文を持つ）。"""
+
+
+# 指定の期間の上限。長い期間は、日を全部並べる集計が重くなり、ほかの要求を止めてしまう（ログイン不要のデモもある）。
+# GSC の保存期間（16ヶ月）が収まる長さにする
+MAX_CUSTOM_DAYS = 500
+# 指定の期間の始まりは、データがある最終日の3年前まで（それより前のデータは、どのソースにも無い）
+EARLIEST_YEARS = 3
 
 
 @dataclass(frozen=True)
@@ -78,11 +77,26 @@ def resolve_period(
         raise PeriodError("期間の始まりが終わりより後になっています")
     if start > data_until:
         raise PeriodError(f"{data_until.isoformat()} より後のデータはまだありません")
+    earliest = data_until
+    for _ in range(EARLIEST_YEARS):
+        earliest = _minus_year(earliest)
+    if start < earliest:
+        raise PeriodError(f"{earliest.isoformat()} より前は指定できません")
     # 終わりはデータがある最終日まで
-    return Range(start, min(end, data_until))
+    current = Range(start, min(end, data_until))
+    if current.days > MAX_CUSTOM_DAYS:
+        raise PeriodError(f"期間は {MAX_CUSTOM_DAYS} 日までにしてください")
+    return current
 
 
 def resolve_compare(compare: CompareName, period: PeriodName, current: Range) -> Range | None:
+    try:
+        return _compare(compare, period, current)
+    except (OverflowError, ValueError) as e:  # 日付の範囲の外（期間の下限があるので、ふつうは起きない）
+        raise PeriodError("比べる期間を決められません") from e
+
+
+def _compare(compare: CompareName, period: PeriodName, current: Range) -> Range | None:
     if compare == "none":
         return None
     if compare == "previous_year":

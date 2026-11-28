@@ -3,7 +3,7 @@
 import { CircleAlert } from "lucide-react";
 
 import { CARD, CARD_CLICKABLE, Stat, Toggle } from "@/components/selectable-card";
-import { formatNumber } from "@/lib/format";
+import { TOTAL_COLOR, formatNumber } from "@/lib/format";
 import type { OkSite, RealtimeErrorKind, RealtimeSite, Totals } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +51,7 @@ export function SiteCards({
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <Toggle
             name="合計"
-            color="var(--ink)"
+            color={TOTAL_COLOR}
             checked={showTotal}
             onChange={onToggleTotal}
             title="グラフに合計の線を出す"

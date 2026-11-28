@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { SelectPrompt } from "@/components/site-selection";
 import { DateLineChart, type DateRow } from "@/components/seo/date-line-chart";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCompact, formatDate, formatNumber, formatPercent } from "@/lib/format";
@@ -41,20 +42,21 @@ export function IndexSection({
   colors: Map<number, string>;
 }) {
   const [crawlMetric, setCrawlMetric] = useState<CrawlMetric>("indexed");
-  const withIndex = sites.filter((s) => s.index !== null);
   // 合計には、サイトマップの URL とインデックスの両方がそろったサイトだけを足す
   // （片方だけのサイトを入れると、割合がずれる。Bing だけ連携してサイトマップを読めないサイトなど）
-  const complete = withIndex.filter((s) => s.index!.sitemap_urls !== null && s.index!.indexed !== null);
-  const totalSitemap = complete.reduce((n, s) => n + s.index!.sitemap_urls!, 0);
-  const totalIndexed = complete.reduce((n, s) => n + s.index!.indexed!, 0);
-  const totalLabel = complete.length === withIndex.length ? "合計" : `合計（サイトマップを読めた${complete.length}サイト）`;
+  const complete = sites.flatMap(({ index }) =>
+    index.sitemap_urls !== null && index.indexed !== null ? [{ sitemap: index.sitemap_urls, indexed: index.indexed }] : [],
+  );
+  const totalSitemap = complete.reduce((n, c) => n + c.sitemap, 0);
+  const totalIndexed = complete.reduce((n, c) => n + c.indexed, 0);
+  const totalLabel = complete.length === sites.length ? "合計" : `合計（サイトマップを読めた${complete.length}サイト）`;
 
   // 推移: Google は日ごとの検索に出たページ数、Bing はクロールの数字（インデックス数・クロール数・クロールエラー）
-  const days = engine === "google" ? (withIndex[0]?.index!.daily ?? []) : (withIndex[0]?.crawl ?? []);
+  const days = engine === "google" ? (sites[0]?.index.daily ?? []) : (sites[0]?.crawl ?? []);
   const rows: DateRow[] = days.map((day, i) => {
     const row: DateRow = { date: day.date };
-    for (const site of withIndex) {
-      row[`s${site.site_id}`] = engine === "google" ? (site.index!.daily?.[i]?.pages ?? null) : (site.crawl?.[i]?.[crawlMetric] ?? null);
+    for (const site of sites) {
+      row[`s${site.site_id}`] = engine === "google" ? (site.index.daily?.[i]?.pages ?? null) : (site.crawl?.[i]?.[crawlMetric] ?? null);
     }
     return row;
   });
@@ -72,8 +74,8 @@ export function IndexSection({
         </p>
       </div>
 
-      {withIndex.length === 0 ? (
-        <p className="px-4 py-10 text-center text-ink-3">サイトを選んでください。</p>
+      {sites.length === 0 ? (
+        <SelectPrompt />
       ) : (
         <>
           {/* サイトごとの数。スマホでは表を横にスクロールさせる */}
@@ -87,8 +89,8 @@ export function IndexSection({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {withIndex.map((site) => {
-                const index = site.index!;
+              {sites.map((site) => {
+                const index = site.index;
                 return (
                   <TableRow key={site.site_id}>
                     <TableCell className="pl-4">
@@ -97,7 +99,10 @@ export function IndexSection({
                     {index.sitemap_urls === null ? (
                       <TableCell className={`${NUM} text-ink-3`}>サイトマップを読めていません</TableCell>
                     ) : (
-                      <TableCell className={NUM} title={`${formatDate(index.sitemap_checked_at!)}に読んだサイトマップ`}>
+                      <TableCell
+                        className={NUM}
+                        title={index.sitemap_checked_at ? `${formatDate(index.sitemap_checked_at)}に読んだサイトマップ` : undefined}
+                      >
                         {formatNumber(index.sitemap_urls)}
                       </TableCell>
                     )}
@@ -114,7 +119,7 @@ export function IndexSection({
                 );
               })}
             </TableBody>
-            {withIndex.length > 1 && complete.length > 0 && (
+            {sites.length > 1 && complete.length > 0 && (
               <TableFooter>
                 <TableRow>
                   <TableCell className="pl-4">{totalLabel}</TableCell>
@@ -143,7 +148,7 @@ export function IndexSection({
           <div className={engine === "google" ? "border-t px-2 py-4" : "px-2 py-4"}>
             <DateLineChart
               rows={rows}
-              series={withIndex.map((s) => ({ key: `s${s.site_id}`, name: s.name, color: colors.get(s.site_id) }))}
+              series={sites.map((s) => ({ key: `s${s.site_id}`, name: s.name, color: colors.get(s.site_id) }))}
               title={chartTitle}
               format={formatNumber}
               axisFormat={formatCompact}

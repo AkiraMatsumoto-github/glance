@@ -22,7 +22,10 @@ from glance.google.client import (
     ReauthRequired,
 )
 from glance.sites import demo
-from glance.sites.links import BingKeyOut, GscChoiceOut, ensure_gsc_site, match_gsc_site, set_link, tenant_site
+from glance.bing.routes import BingKeyOut
+from glance.sites.common import tenant_site
+from glance.sites.gsc import ensure_gsc_site, match_gsc_site
+from glance.sites.links import GscChoiceOut, set_link
 
 router = APIRouter(prefix="/api")
 
@@ -45,8 +48,6 @@ class SiteLinks(BaseModel):
 class SiteOut(BaseModel):
     id: int
     name: str
-    sort_order: int
-    timezone: str
     ga4_property_id: str | None
     links: SiteLinks
 
@@ -112,8 +113,6 @@ def _out(site: Site, links: SiteLinks) -> SiteOut:
     return SiteOut(
         id=site.id,
         name=site.name,
-        sort_order=site.sort_order,
-        timezone=site.timezone,
         ga4_property_id=site.ga4_property_id,
         links=links,
     )

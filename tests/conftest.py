@@ -40,11 +40,31 @@ def database_url() -> str:
     return url
 
 
-def _clean(database_url: str) -> None:
+JSON = {"content-type": "application/json"}  # 本文の無い書き込み（DELETE など）に付ける
+
+
+def db_query(database_url: str, sql: str, params: tuple = ()) -> list[tuple]:
+    """テスト用の DB で SQL を1つ動かす（すぐ確定する）。結果の行を返す（行を返さない文は空）。"""
     url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("TRUNCATE sessions, connections, sites, bing_keys, users RESTART IDENTITY CASCADE")
-        conn.execute("DELETE FROM tenants WHERE id <> 1")
+        cursor = conn.execute(sql, params)
+        return cursor.fetchall() if cursor.description else []
+
+
+def clean_database(database_url: str) -> None:
+    """テストの前に、テスト用の DB を空にする（顧客は、マイグレーションで作る1つだけにする）。"""
+    db_query(database_url, "TRUNCATE sessions, connections, sites, bing_keys, users RESTART IDENTITY CASCADE")
+    db_query(database_url, "DELETE FROM tenants WHERE id <> 1")
+
+
+async def add_site(client: AsyncClient, property_id: str, gsc_site_url: str | None = None) -> dict:
+    """GA4 のプロパティをサイトとして追加する（Search Console も一緒に紐づけるときは gsc_site_url）。"""
+    body: dict[str, str] = {"property_id": property_id}
+    if gsc_site_url is not None:
+        body["gsc_site_url"] = gsc_site_url
+    response = await client.post("/api/sites", json=body)
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
 def make_settings(database_url: str, **overrides: object) -> Settings:
@@ -64,7 +84,7 @@ def make_settings(database_url: str, **overrides: object) -> Settings:
 
 @pytest.fixture
 def google() -> GoogleClient:
-    """テストで差し替える GA4 クライアント。既定は待ち時間のないフェイク。"""
+    """テストで差し替える Google（GA4・Search Console）のクライアント。既定は待ち時間のないフェイク。"""
     return FakeGoogleClient(latency=(0, 0), clock=lambda: 1_800_000_000.0)
 
 
@@ -76,7 +96,7 @@ def bing() -> BingClient:
 
 @pytest.fixture
 async def app(database_url: str, google: GoogleClient, bing: BingClient) -> AsyncIterator[FastAPI]:
-    _clean(database_url)
+    clean_database(database_url)
     application = create_app(
         make_settings(database_url), google_factory=lambda _user: google, realtime_timeout=0.5, bing_client=bing
     )

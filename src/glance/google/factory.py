@@ -1,4 +1,4 @@
-"""利用者ごとの GA4 クライアントを作る。"""
+"""利用者ごとの Google（GA4・Search Console）のクライアントを作る。"""
 
 from collections.abc import Callable
 

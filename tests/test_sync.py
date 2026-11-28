@@ -3,27 +3,20 @@
 from datetime import date, timedelta
 
 import httpx
-import psycopg
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy.engine import make_url
 
 from glance.google.fake import FakeGoogleClient
 from glance.google.client import GoogleQuotaExceeded, GscRow
-from glance.sync import runner
-from glance.sync.runner import Syncer, gsc_values, months_ago
+from glance.sync import gsc
+from glance.sync.gsc import GscSync, gsc_values, months_ago
+from glance.sync.runner import Syncer
 from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher, sitemap_paths
 from glance.sync.values import bing_date, country_code, device, page_path
+from tests.conftest import add_site, db_query
 
 TODAY = date(2026, 11, 20)
-
-
-def _query(database_url: str, sql: str, params: tuple = ()) -> list[tuple]:
-    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(url, autocommit=True) as conn:
-        cursor = conn.execute(sql, params)
-        return cursor.fetchall() if cursor.description else []
 
 
 def syncer(app: FastAPI, today: date = TODAY) -> Syncer:
@@ -34,15 +27,16 @@ def syncer(app: FastAPI, today: date = TODAY) -> Syncer:
         app.state.cipher,
         today,
         sitemap_fetcher=FakeSitemapFetcher(),
+        allowed_emails=app.state.settings.allowed_email_list,
     )
 
 
 async def linked_site(client: AsyncClient) -> dict:
     """LogiShift を追加し、Search Console と Bing を紐づける。"""
-    site = (await client.post("/api/sites", json={"property_id": "900000001", "gsc_site_url": "sc-domain:logishift.example"})).json()
+    site = await add_site(client, "900000001", "sc-domain:logishift.example")
     key = (await client.post("/api/bing/keys", json={"name": "k", "key": "good-key-1234"})).json()
     linked = await client.put(f"/api/sites/{site['id']}/bing", json={"key_id": key["id"], "site_url": "https://www.logishift.example/"})
-    assert linked.status_code == 200
+    assert linked.status_code == 204
     return site
 
 
@@ -50,8 +44,8 @@ async def linked_site(client: AsyncClient) -> dict:
 def short_backfill(monkeypatch: pytest.MonkeyPatch) -> None:
     # テストでは、初めの取り込みを2ヶ月前の月初からにし（本物は16ヶ月）、上限に当たったときに待たない。
     # 最初の月（9月）は整理しない月になるので、10月を整理の確かめに使う
-    monkeypatch.setattr(runner, "BACKFILL_MONTHS", 2)
-    monkeypatch.setattr(runner, "GSC_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr(gsc, "BACKFILL_MONTHS", 2)
+    monkeypatch.setattr(gsc, "GSC_BACKOFF_SECONDS", 0)
 
 
 def test_values() -> None:
@@ -81,16 +75,16 @@ async def test_sync_fills_tables_and_logs(app: FastAPI, logged_in: AsyncClient, 
     outcomes = await syncer(app).run({"gsc", "bing"})
     assert all(o.error is None for o in outcomes), outcomes
     start = months_ago(TODAY, 2)
-    assert _query(database_url, "SELECT min(date), max(date), count(DISTINCT country) FROM gsc_site") == [(start, TODAY, 3)]
-    assert set(_query(database_url, "SELECT DISTINCT country FROM gsc_site")) == {("(not set)",), ("JP",), ("US",)}
-    assert set(_query(database_url, "SELECT DISTINCT device FROM gsc_page")) == {("desktop",), ("mobile",)}
-    assert ("/tools/倉庫/",) in _query(database_url, "SELECT DISTINCT page FROM gsc_query_page")
+    assert db_query(database_url, "SELECT min(date), max(date), count(DISTINCT country) FROM gsc_site") == [(start, TODAY, 3)]
+    assert set(db_query(database_url, "SELECT DISTINCT country FROM gsc_site")) == {("(not set)",), ("JP",), ("US",)}
+    assert set(db_query(database_url, "SELECT DISTINCT device FROM gsc_page")) == {("desktop",), ("mobile",)}
+    assert ("/tools/倉庫/",) in db_query(database_url, "SELECT DISTINCT page FROM gsc_query_page")
     # Bing は取れる範囲の全部（日次98日・ページ別13週×3ページ）
-    assert _query(database_url, "SELECT count(*) FROM bing_site_daily") == [(98,)]
-    assert _query(database_url, "SELECT count(*) FROM bing_crawl_daily") == [(98,)]
-    assert _query(database_url, "SELECT count(*), count(DISTINCT page) FROM bing_page_weekly") == [(39, 3)]
-    assert _query(database_url, "SELECT raw->>'Clicks' IS NOT NULL FROM bing_site_daily LIMIT 1") == [(True,)]
-    runs = _query(database_url, "SELECT source, table_name, ok FROM sync_runs WHERE site_id = %s ORDER BY id", (site["id"],))
+    assert db_query(database_url, "SELECT count(*) FROM bing_site_daily") == [(98,)]
+    assert db_query(database_url, "SELECT count(*) FROM bing_crawl_daily") == [(98,)]
+    assert db_query(database_url, "SELECT count(*), count(DISTINCT page) FROM bing_page_weekly") == [(39, 3)]
+    assert db_query(database_url, "SELECT raw->>'Clicks' IS NOT NULL FROM bing_site_daily LIMIT 1") == [(True,)]
+    runs = db_query(database_url, "SELECT source, table_name, ok FROM sync_runs WHERE site_id = %s ORDER BY id", (site["id"],))
     assert {(s, t) for s, t, _ in runs} == {
         ("gsc", "gsc_site"), ("gsc", "gsc_page"), ("gsc", "gsc_query_page"), ("gsc", "gsc_query_cleanup"),
         ("gsc", "sitemap_urls"),
@@ -101,9 +95,9 @@ async def test_sync_fills_tables_and_logs(app: FastAPI, logged_in: AsyncClient, 
     # 次は、取得済みの最終日の3日前から取り直す
     later = TODAY + timedelta(days=2)
     await syncer(app, later).run({"gsc"})
-    [(again,)] = _query(database_url, "SELECT start_date FROM sync_runs WHERE table_name = 'gsc_site' ORDER BY id DESC LIMIT 1")
+    [(again,)] = db_query(database_url, "SELECT start_date FROM sync_runs WHERE table_name = 'gsc_site' ORDER BY id DESC LIMIT 1")
     assert again == TODAY - timedelta(days=3)
-    assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(later,)]
+    assert db_query(database_url, "SELECT max(date) FROM gsc_site") == [(later,)]
 
 
 async def test_sync_cleans_small_queries_after_month_closes(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
@@ -112,14 +106,14 @@ async def test_sync_cleans_small_queries_after_month_closes(app: FastAPI, logged
     await syncer(app, date(2026, 11, 5)).run({"gsc"})
     # 10月と11月に、表示回数が10回未満のクエリを置く。11月20日に取り込むと、10月の分だけ消える
     for day in ("2026-10-20", "2026-11-01"):
-        _query(
+        db_query(
             database_url,
             "INSERT INTO gsc_query_page VALUES (%s, %s, 'まれなクエリ', '/', 0, 3, 5, 15)",
             (site["id"], day),
         )
     await syncer(app).run({"gsc"})
-    assert _query(database_url, "SELECT date FROM gsc_query_page WHERE query = 'まれなクエリ'") == [(date(2026, 11, 1),)]
-    assert _query(
+    assert db_query(database_url, "SELECT date FROM gsc_query_page WHERE query = 'まれなクエリ'") == [(date(2026, 11, 1),)]
+    assert db_query(
         database_url, "SELECT start_date FROM sync_runs WHERE table_name = 'gsc_query_cleanup' AND rows > 0"
     ) == [(date(2026, 10, 1),)]
 
@@ -145,10 +139,10 @@ async def test_sync_stops_at_failure_and_resumes(app: FastAPI, google: FailingOn
     # クエリ表が途中で止まったときは、月の数字がそろっていないので、少ないクエリの整理をしない
     assert "gsc_query_cleanup" not in {o.table for o in outcomes}
     # 失敗した日の前の日までで止まる
-    assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY - timedelta(days=6),)]
+    assert db_query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY - timedelta(days=6),)]
     google.fail_on = None
     assert all(o.error is None for o in await syncer(app).run({"gsc"}))
-    assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
+    assert db_query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
 
 
 class QuotaTwice(FakeGoogleClient):
@@ -171,7 +165,7 @@ async def test_sync_retries_on_quota(app: FastAPI, google: QuotaTwice, logged_in
     await linked_site(logged_in)
     assert all(o.error is None for o in await syncer(app).run({"gsc"}))
     assert set(google.calls.values()) == {3}
-    assert _query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
+    assert db_query(database_url, "SELECT max(date) FROM gsc_site") == [(TODAY,)]
 
 
 class NoDataUntil(FakeGoogleClient):
@@ -210,7 +204,7 @@ async def test_seo_report(app: FastAPI, logged_in: AsyncClient, database_url: st
     assert (empty["sites"], empty["data_until"]) == ([], None)
 
     site = await linked_site(logged_in)
-    await logged_in.post("/api/sites", json={"property_id": "900000002"})  # 紐づけていないサイトは出さない
+    await add_site(logged_in, "900000002")  # 紐づけていないサイトは出さない
     await syncer(app, date.today()).run({"gsc", "bing"})
 
     google = (await logged_in.get("/api/seo", params={"period": "last_7_days"})).json()
@@ -218,7 +212,7 @@ async def test_seo_report(app: FastAPI, logged_in: AsyncClient, database_url: st
     assert google["data_until"] == date.today().isoformat()
     report = google["sites"][0]
     start, end = google["period"]["start"], google["period"]["end"]
-    [(clicks, impressions, weighted)] = _query(
+    [(clicks, impressions, weighted)] = db_query(
         database_url,
         "SELECT sum(clicks), sum(impressions), sum(position_weighted) FROM gsc_site WHERE site_id = %s AND date BETWEEN %s AND %s",
         (site["id"], start, end),
@@ -248,8 +242,8 @@ async def test_seo_report(app: FastAPI, logged_in: AsyncClient, database_url: st
 
 async def test_seo_report_is_per_tenant(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
     await linked_site(logged_in)
-    _query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    _query(database_url, "UPDATE users SET tenant_id = 2")
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    db_query(database_url, "UPDATE users SET tenant_id = 2")
     assert (await logged_in.get("/api/seo")).json()["sites"] == []
 
 
@@ -305,7 +299,7 @@ async def test_seo_report_index(app: FastAPI, logged_in: AsyncClient, database_u
     site = await linked_site(logged_in)
     await syncer(app, date.today()).run({"gsc"})
     # 索引→2つのサイトマップから6ページ。パスにそろえる（エンコードを解除する）
-    assert len(_query(database_url, "SELECT path FROM sitemap_urls WHERE site_id = %s", (site["id"],))) == 6
+    assert len(db_query(database_url, "SELECT path FROM sitemap_urls WHERE site_id = %s", (site["id"],))) == 6
     index = (await logged_in.get("/api/seo", params={"period": "last_7_days"})).json()["sites"][0]["index"]
     assert index["sitemap_urls"] == 6
     assert index["sitemap_checked_at"] == date.today().isoformat()
@@ -335,15 +329,15 @@ async def test_one_site_failure_does_not_stop_others(
     app: FastAPI, logged_in: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     first = await linked_site(logged_in)
-    second = (await logged_in.post("/api/sites", json={"property_id": "900000002", "gsc_site_url": "https://techshift.example/"})).json()
-    original = Syncer._clean_queries
+    second = await add_site(logged_in, "900000002", "https://techshift.example/")
+    original = GscSync._clean_queries
 
     async def broken(self, site, target, start, end):  # type: ignore[no-untyped-def]
         if site.id == first["id"]:
             raise RuntimeError("DB のエラー")
         return await original(self, site, target, start, end)
 
-    monkeypatch.setattr(Syncer, "_clean_queries", broken)
+    monkeypatch.setattr(GscSync, "_clean_queries", broken)
     outcomes = await syncer(app).run({"gsc"})
     [failed] = [o for o in outcomes if o.error]
     assert (failed.site, failed.table, "DB のエラー" in failed.error) == ("LogiShift", "-", True)
@@ -358,7 +352,7 @@ async def test_relinking_to_another_site_refetches(app: FastAPI, logged_in: Asyn
     await syncer(app).run({"gsc", "bing"})
 
     def counts() -> tuple:
-        return _query(
+        return db_query(
             database_url,
             "SELECT (SELECT count(*) FROM gsc_site WHERE site_id = %s), (SELECT count(*) FROM bing_site_daily WHERE site_id = %s),"
             " (SELECT count(*) FROM sync_runs WHERE site_id = %s AND source = 'gsc')",
@@ -375,11 +369,11 @@ async def test_relinking_to_another_site_refetches(app: FastAPI, logged_in: Asyn
     await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "https://www.logishift.example/"})
     gsc_rows, bing_rows, gsc_runs = counts()
     assert (gsc_rows, gsc_runs) == (0, 0) and bing_rows == before[1]
-    assert _query(database_url, "SELECT count(*) FROM sitemap_urls WHERE site_id = %s", (site["id"],)) == [(0,)]
+    assert db_query(database_url, "SELECT count(*) FROM sitemap_urls WHERE site_id = %s", (site["id"],)) == [(0,)]
     # 次の取り込みは、新しい先の過去分から取る
     await syncer(app).run({"gsc"})
-    assert _query(database_url, "SELECT min(date) FROM gsc_site WHERE site_id = %s", (site["id"],)) == [(months_ago(TODAY, 2),)]
-    assert _query(database_url, "SELECT DISTINCT target FROM sync_runs WHERE site_id = %s AND source = 'gsc'", (site["id"],)) == [
+    assert db_query(database_url, "SELECT min(date) FROM gsc_site WHERE site_id = %s", (site["id"],)) == [(months_ago(TODAY, 2),)]
+    assert db_query(database_url, "SELECT DISTINCT target FROM sync_runs WHERE site_id = %s AND source = 'gsc'", (site["id"],)) == [
         ("https://www.logishift.example/",)
     ]
 
@@ -387,10 +381,10 @@ async def test_relinking_to_another_site_refetches(app: FastAPI, logged_in: Asyn
 async def test_bing_page_position_ignores_weeks_without_position(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
     site = await linked_site(logged_in)
     await syncer(app, date.today()).run({"bing"})
-    _query(database_url, "DELETE FROM bing_page_weekly")
+    db_query(database_url, "DELETE FROM bing_page_weekly")
     week = date.today() - timedelta(days=7)
     for day, position, impressions in ((week, 8.0, 100), (week - timedelta(days=7), None, 300)):
-        _query(
+        db_query(
             database_url,
             "INSERT INTO bing_page_weekly VALUES (%s, %s, '/x/', 1, %s, %s, '{}')",
             (site["id"], day, impressions, position),
@@ -436,3 +430,24 @@ async def test_sitemap_stays_inside_the_site() -> None:
     # 登録されたサイトマップが全部サイトの外なら、読めなかったことにする（空で入れ替えない）
     with pytest.raises(ValueError, match="サイトの外にあるサイトマップは読みません"):
         await sitemap_paths(fetcher, ["https://cdn.example/sitemap.xml"], "sc-domain:a.example")
+
+
+async def test_sync_skips_users_and_keys_that_are_not_allowed(
+    app: FastAPI, logged_in: AsyncClient, database_url: str
+) -> None:
+    await linked_site(logged_in)
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    # 許可リストから外した人の許可では、Search Console を取らない
+    outcomes = await Syncer(
+        app.state.sessionmaker, app.state.google_factory, app.state.bing_client, app.state.cipher, TODAY,
+        sitemap_fetcher=FakeSitemapFetcher(), allowed_emails=[],
+    ).run({"gsc"})
+    assert outcomes and all("許可リストにいません" in (o.error or "") for o in outcomes)
+    # 取らなかった表は、サイトマップも含めて取得ログに残る
+    assert {o.table for o in outcomes} == {"gsc_site", "gsc_page", "gsc_query_page", "sitemap_urls"}
+    # キーがほかの顧客のものなら、Bing を取らない（API は必ず同じ顧客のキーを書くが、念のため）
+    db_query(database_url, "UPDATE bing_keys SET tenant_id = 2")
+    outcomes = await syncer(app).run({"bing"})
+    assert outcomes and all("顧客のものではありません" in (o.error or "") for o in outcomes)
+    assert db_query(database_url, "SELECT count(*) FROM gsc_site") == [(0,)]
+    assert db_query(database_url, "SELECT count(*) FROM bing_site_daily") == [(0,)]

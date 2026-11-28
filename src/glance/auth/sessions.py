@@ -52,6 +52,12 @@ async def find_user(db: AsyncSession, raw: str) -> User | None:
     return user
 
 
+async def end_sessions(db: AsyncSession, user: User) -> None:
+    """その人のセッションを全部消す（全部の端末からログアウトさせる）。"""
+    await db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+    await db.commit()
+
+
 async def delete_session(db: AsyncSession, raw: str) -> None:
     await db.execute(delete(LoginSession).where(LoginSession.id_hash == hash_session_id(raw)))
     await db.commit()

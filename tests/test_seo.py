@@ -42,8 +42,8 @@ async def test_demo_google(client: AsyncClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["engine"] == "google"
-    assert body["period"]["label"] == "直近28日"
-    assert body["compare"] is not None
+    assert set(body["period"]) == set(body["compare"]) == {"start", "end"}
+    assert body["period"]["end"] == body["data_until"]
     site = body["sites"][0]
     assert site["name"] == "デモサイト A"
     assert len(site["daily"]) == 28 and len(site["compare_daily"]) == 28
@@ -81,3 +81,30 @@ async def test_demo_rejects_bad_period(client: AsyncClient) -> None:
     assert response.status_code == 400
     assert response.json()["code"] == "invalid_period"
     assert (await client.get("/api/demo/seo?engine=yahoo")).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # 長すぎる期間・古すぎる始まりは、日を全部並べる前に断る（ログイン不要のデモで、サーバーを止めないため）
+        "period=custom&start=0001-01-01&end=2026-11-20&compare=none",
+        "period=custom&start=0001-01-01&end=0001-01-05&compare=previous_period",
+        "period=custom&start=2024-01-01&end=2026-11-20&compare=none",
+    ],
+)
+async def test_demo_rejects_too_long_or_too_old_period(client: AsyncClient, query: str) -> None:
+    response = await client.get(f"/api/demo/seo?{query}")
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_period"
+
+
+def test_custom_period_limits() -> None:
+    until = date(2026, 11, 20)
+    assert resolve_period("custom", until, date(2025, 7, 9), date(2026, 11, 20)).days == 500
+    with pytest.raises(PeriodError, match="500 日まで"):
+        resolve_period("custom", until, date(2025, 7, 8), date(2026, 11, 20))
+    with pytest.raises(PeriodError, match="より前は指定できません"):
+        resolve_period("custom", until, date(2023, 11, 19), date(2023, 11, 30))
+    # 3年前の日からなら、前年と比べても日付の範囲に収まる
+    current = resolve_period("custom", until, date(2023, 11, 20), date(2023, 11, 30))
+    assert resolve_compare("previous_year", "custom", current) == Range(date(2022, 11, 20), date(2022, 11, 30))

@@ -22,7 +22,7 @@ import uvicorn
 from playwright.sync_api import Browser, Page, sync_playwright
 
 from glance.main import create_app
-from tests.conftest import _clean, make_settings
+from tests.conftest import clean_database, make_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_OUT = ROOT / "web" / "out"
@@ -51,7 +51,7 @@ def base_url(database_url: str) -> Iterator[str]:
     """API と画面を、テスト用の DB・フェイクモードで起動する。"""
     if not (WEB_OUT / "index.html").exists():
         pytest.skip("web/out がありません。先に cd web && npm run build")
-    _clean(database_url)
+    clean_database(database_url)
     port = _free_port()
     url = f"http://127.0.0.1:{port}"
     app = create_app(make_settings(database_url, static_dir=str(WEB_OUT), public_url=url))

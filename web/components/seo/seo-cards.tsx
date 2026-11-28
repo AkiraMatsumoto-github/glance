@@ -2,7 +2,7 @@
 
 import { addTotals, ctr, formatChange, formatMetric } from "@/lib/seo-metrics";
 import { CARD_CLICKABLE, Stat, Toggle } from "@/components/selectable-card";
-import { formatCompact, formatNumber } from "@/lib/format";
+import { TOTAL_COLOR, formatCompact, formatNumber } from "@/lib/format";
 import type { SeoEngine, SeoSite } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +37,7 @@ export function SeoCards({
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <Toggle
             name="合計"
-            color="var(--ink)"
+            color={TOTAL_COLOR}
             checked={showTotal}
             onChange={onToggleTotal}
             title="グラフに合計の線を出す"
@@ -64,8 +64,6 @@ export function SeoCards({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         {sites.map((site) => {
           const checked = selected.includes(site);
-          // インデックス数は在庫なので、期間の中で数字のある最後の日の値（取り込んでいない日は null）
-          const lastIndexed = site.crawl?.findLast((day) => day.indexed !== null)?.indexed ?? undefined;
           return (
             <div key={site.site_id} className={cn(CARD_CLICKABLE, "flex min-w-0 flex-col gap-3 p-4")}>
               <Toggle
@@ -89,7 +87,8 @@ export function SeoCards({
                     <div>掲載順位 {formatMetric(site.totals.position, "position")}</div>
                   ) : (
                     // インデックス数はその日の在庫なので、期間の最後の日の値
-                    lastIndexed !== undefined && <div>インデックス {formatNumber(lastIndexed)}</div>
+                    // Bing のインデックス数（期間の最後の日。API の index.indexed）
+                    site.index.indexed !== null && <div>インデックス {formatNumber(site.index.indexed)}</div>
                   )}
                 </div>
               </div>

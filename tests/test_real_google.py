@@ -1,4 +1,4 @@
-"""本物の GA4 クライアントの、応答の読み取りとエラーの変換（Google の応答は作って渡す）。"""
+"""本物の Google のクライアント（GA4・Search Console）の、応答の読み取りとエラーの変換（Google の応答は作って渡す）。"""
 
 from types import SimpleNamespace
 from typing import Any
@@ -102,6 +102,8 @@ async def test_events_by_count() -> None:
         (api_errors.PermissionDenied("no"), GooglePermissionDenied),
         (api_errors.NotFound("no"), GooglePermissionDenied),
         (api_errors.ResourceExhausted("quota"), GoogleQuotaExceeded),
+        (api_errors.ServiceUnavailable("down"), GoogleUnavailable),
+        (api_errors.DeadlineExceeded("slow"), GoogleUnavailable),
         (api_errors.Unauthenticated("expired"), ReauthRequired),
     ],
 )

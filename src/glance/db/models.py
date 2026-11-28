@@ -42,7 +42,7 @@ class User(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
     google_sub: Mapped[str] = mapped_column(String(255), unique=True)
     email: Mapped[str] = mapped_column(String(320))
-    # 更新トークン（Fernet で暗号化したもの）。2番目の段階で Google ログインをつないでから入る
+    # 更新トークン（Fernet で暗号化したもの）。Google でログインしたときに入る（フェイクのログインでは空）
     refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
     scopes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

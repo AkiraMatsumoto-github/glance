@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Notice } from "@/components/notice";
 import { LOCKED, Locked } from "@/components/sites/locked";
@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { api, errorMessage } from "@/lib/api";
 import type { BingKey, GscChoice, Site } from "@/lib/types";
+import { useData, useSave } from "@/lib/use-data";
 
 // サイト設定の、Search Console と Bing の紐づけのダイアログ（docs/01_design/screen_design.md §4）。
 // 本物は /api、デモは /api/demo から一覧を取る。デモは見るだけで、保存などのボタンは押せない
@@ -29,49 +30,6 @@ type DialogProps = {
   onClose: () => void;
   onSaved: () => void; // 保存したら一覧を読み直す
 };
-
-// 一覧を取る。url が null のあいだは取らない。url か reload が変われば取り直す
-// （reload は、同じ url でも取り直したいとき（キーを入れ直したときなど）に増やす）
-function useData<T>(url: string | null, reload = 0) {
-  const request = url === null ? null : `${url}#${reload}`;
-  const [result, setResult] = useState<{ request: string; data?: T; error?: string } | null>(null);
-  useEffect(() => {
-    if (url === null) return;
-    const key = `${url}#${reload}`;
-    let cancelled = false;
-    api<T>(url).then(
-      (data) => {
-        if (!cancelled) setResult({ request: key, data });
-      },
-      (e: unknown) => {
-        if (!cancelled) setResult({ request: key, error: errorMessage(e) });
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [url, reload]);
-  return result !== null && result.request === request ? result : null;
-}
-
-// 保存の送信。送っている間はボタンを押せなくし、失敗したら理由を出す
-function useSave(onDone: () => void) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function save(action: () => Promise<unknown>) {
-    setBusy(true);
-    setError(null);
-    try {
-      await action();
-      onDone();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { busy, error, save };
-}
 
 // サイトの一覧から1つ選ぶ。最後に「紐づけない」
 function SiteChoices({
@@ -239,13 +197,13 @@ export function BingDialog({ site, base, demo, onClose, onSaved }: DialogProps) 
 }
 
 const NEW_KEY = "new";
+type KeyChoice = number | typeof NEW_KEY;
 
 function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: Site }) {
   const loadedKeys = useData<BingKey[]>(`${base}/bing/keys`);
   const [added, setAdded] = useState<BingKey[]>([]); // このダイアログで保存したキー
-  const [picked, setPicked] = useState<number | typeof NEW_KEY | null>(null);
+  const [picked, setPicked] = useState<KeyChoice | null>(null);
   const [pickedSite, setPickedSite] = useState<string | null>(null);
-  const [rekeying, setRekeying] = useState(false);
   // キーを保存・入れ直したら、そのキーで見られるサイトを取り直す（入れ直しは同じ url なので、印を増やす）
   const [sitesReload, setSitesReload] = useState(0);
   const keys = loadedKeys?.data ? [...loadedKeys.data.filter((k) => !added.some((a) => a.id === k.id)), ...added] : null;
@@ -262,11 +220,15 @@ function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: 
     onClose();
   });
 
+  // キーを選び直したら、サイトは選び直す（初めは、そのキーで紐づけているサイト）
+  function pickKey(choice: KeyChoice) {
+    setPicked(choice);
+    setPickedSite(null);
+  }
+
   function keySaved(key: BingKey) {
     setAdded((prev) => [...prev.filter((k) => k.id !== key.id), key]);
-    setPicked(key.id);
-    setPickedSite(null);
-    setRekeying(false);
+    pickKey(key.id);
     setSitesReload((n) => n + 1);
   }
 
@@ -275,70 +237,7 @@ function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: 
   return (
     <>
       {error && <Notice>{error}</Notice>}
-      <fieldset disabled={demo} title={demo ? LOCKED : undefined} className="space-y-2">
-        <legend className="mb-1.5 text-xs font-medium text-ink-3">API キー</legend>
-        <ul className="divide-y rounded-lg border">
-          {keys.map((key) => (
-            <li key={key.id} className="px-3 py-2 text-sm">
-              <div className="flex items-center gap-2.5">
-                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 in-disabled:cursor-default">
-                  <input
-                    type="radio"
-                    name="bing-key"
-                    checked={keyChoice === key.id}
-                    onChange={() => {
-                      setPicked(key.id);
-                      setPickedSite(null);
-                      setRekeying(false);
-                    }}
-                    className="accent-ink"
-                  />
-                  <span className="truncate">{key.name}</span>
-                  <span className="shrink-0 text-xs text-ink-3 tabular-nums">末尾 {key.last4}</span>
-                </label>
-                {keyChoice === key.id && !rekeying && (
-                  <Button variant="outline" size="xs" onClick={() => setRekeying(true)}>
-                    入れ直す
-                  </Button>
-                )}
-              </div>
-              {keyChoice === key.id && rekeying && (
-                <KeyForm
-                  submitLabel="入れ直す"
-                  onCancel={() => setRekeying(false)}
-                  onSubmit={(_name, value) =>
-                    api<BingKey>(`/api/bing/keys/${key.id}`, { method: "PUT", json: { key: value } }).then(keySaved)
-                  }
-                />
-              )}
-            </li>
-          ))}
-          <li className="px-3 py-2 text-sm">
-            <label className="flex cursor-pointer items-center gap-2.5 in-disabled:cursor-default">
-              <input
-                type="radio"
-                name="bing-key"
-                checked={keyChoice === NEW_KEY}
-                onChange={() => setPicked(NEW_KEY)}
-                className="accent-ink"
-              />
-              新しいキーを追加
-            </label>
-            {keyChoice === NEW_KEY && (
-              <KeyForm
-                withName
-                submitLabel="キーを保存"
-                onSubmit={(name, value) =>
-                  api<BingKey>("/api/bing/keys", { method: "POST", json: { name, key: value } }).then(keySaved)
-                }
-              />
-            )}
-          </li>
-        </ul>
-        <p className="text-xs text-ink-3">
-          キーは Bing Webmaster Tools の「設定」→「API アクセス」で発行します。キーは画面に出さず、末尾4文字だけを出します。入れ直すと、そのキーを使う全サイトに効きます。
-        </p>
-      </fieldset>
+      <BingKeyPicker keys={keys} value={keyChoice} demo={demo} onPick={pickKey} onKeySaved={keySaved} />
 
       {keyChoice === NEW_KEY ? (
         <p className="text-ink-3">キーを保存すると、そのキーで見られるサイトが出ます。</p>
@@ -365,6 +264,97 @@ function BingBody({ site, base, demo, onClose, onSaved }: DialogProps & { site: 
         }
       />
     </>
+  );
+}
+
+// 使うキーを選ぶ。選んだキーは入れ直せ、最後の「新しいキーを追加」で名前を付けて入れる。
+// 保存したキー（新しく入れた・入れ直した）は onKeySaved で返す
+function BingKeyPicker({
+  keys,
+  value,
+  demo,
+  onPick,
+  onKeySaved,
+}: {
+  keys: BingKey[];
+  value: KeyChoice;
+  demo: boolean;
+  onPick: (choice: KeyChoice) => void;
+  onKeySaved: (key: BingKey) => void;
+}) {
+  const [rekeying, setRekeying] = useState(false);
+
+  function pick(choice: KeyChoice) {
+    setRekeying(false);
+    onPick(choice);
+  }
+
+  function saved(key: BingKey) {
+    setRekeying(false);
+    onKeySaved(key);
+  }
+
+  return (
+    <fieldset disabled={demo} title={demo ? LOCKED : undefined} className="space-y-2">
+      <legend className="mb-1.5 text-xs font-medium text-ink-3">API キー</legend>
+      <ul className="divide-y rounded-lg border">
+        {keys.map((key) => (
+          <li key={key.id} className="px-3 py-2 text-sm">
+            <div className="flex items-center gap-2.5">
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 in-disabled:cursor-default">
+                <input
+                  type="radio"
+                  name="bing-key"
+                  checked={value === key.id}
+                  onChange={() => pick(key.id)}
+                  className="accent-ink"
+                />
+                <span className="truncate">{key.name}</span>
+                <span className="shrink-0 text-xs text-ink-3 tabular-nums">末尾 {key.last4}</span>
+              </label>
+              {value === key.id && !rekeying && (
+                <Button variant="outline" size="xs" onClick={() => setRekeying(true)}>
+                  入れ直す
+                </Button>
+              )}
+            </div>
+            {value === key.id && rekeying && (
+              <KeyForm
+                submitLabel="入れ直す"
+                onCancel={() => setRekeying(false)}
+                onSubmit={(_name, secret) =>
+                  api<BingKey>(`/api/bing/keys/${key.id}`, { method: "PUT", json: { key: secret } }).then(saved)
+                }
+              />
+            )}
+          </li>
+        ))}
+        <li className="px-3 py-2 text-sm">
+          <label className="flex cursor-pointer items-center gap-2.5 in-disabled:cursor-default">
+            <input
+              type="radio"
+              name="bing-key"
+              checked={value === NEW_KEY}
+              onChange={() => pick(NEW_KEY)}
+              className="accent-ink"
+            />
+            新しいキーを追加
+          </label>
+          {value === NEW_KEY && (
+            <KeyForm
+              withName
+              submitLabel="キーを保存"
+              onSubmit={(name, secret) =>
+                api<BingKey>("/api/bing/keys", { method: "POST", json: { name, key: secret } }).then(saved)
+              }
+            />
+          )}
+        </li>
+      </ul>
+      <p className="text-xs text-ink-3">
+        キーは Bing Webmaster Tools の「設定」→「API アクセス」で発行します。キーは画面に出さず、末尾4文字だけを出します。入れ直すと、そのキーを使う全サイトに効きます。
+      </p>
+    </fieldset>
   );
 }
 

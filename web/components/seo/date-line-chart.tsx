@@ -6,7 +6,7 @@ import type { TooltipContentProps } from "recharts";
 import { formatDate, formatShortDate } from "@/lib/format";
 
 // 日ごとの折れ線（docs/01_design/screen_design.md §5・§7、design_guideline.md §5）。
-// 日ごとの推移と、Bing のクロールとインデックスで使う。補助線は横だけ、縦軸は右、各値に点、
+// SEO の日ごとの推移と、インデックスの節（Google は日ごとの検索に出たページ数、Bing はクロールの数字）で使う。補助線は横だけ、縦軸は右、各値に点、
 // ホバーで縦線と全系列の値のカード。比べる期間は、同じ色の薄い破線で重ねる
 
 // 比べる期間の破線の濃さ。この期間の線より目立たないよう薄くする（凡例の破線もこれに合わせる）

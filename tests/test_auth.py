@@ -1,16 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
-import psycopg
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.engine import make_url
 
 from glance.auth.sessions import COOKIE_NAME
 from glance.main import create_app
-from tests.conftest import EMAIL, make_settings
+from tests.conftest import EMAIL, JSON, db_query, make_settings
 
-JSON = {"content-type": "application/json"}
 
 
 async def test_me_requires_login(client: AsyncClient) -> None:
@@ -49,12 +46,9 @@ async def test_login_rejected_without_allowed_email(database_url: str) -> None:
 
 
 async def test_expired_session_is_rejected(logged_in: AsyncClient, database_url: str) -> None:
-    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("UPDATE sessions SET expires_at = %s", (datetime.now(UTC) - timedelta(minutes=1),))
+    db_query(database_url, "UPDATE sessions SET expires_at = %s", (datetime.now(UTC) - timedelta(minutes=1),))
     assert (await logged_in.get("/api/me")).status_code == 401
-    with psycopg.connect(url, autocommit=True) as conn:
-        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (0,)
+    assert db_query(database_url, "SELECT count(*) FROM sessions") == [(0,)]
 
 
 async def test_write_requires_json(logged_in: AsyncClient) -> None:
@@ -98,3 +92,38 @@ async def test_static_pages(database_url: str, tmp_path: object, app: FastAPI) -
         assert missing.text == "missing"
         assert (await c.get("/api/me")).status_code == 401
     await web.state.engine.dispose()
+
+
+async def test_large_body_is_rejected_before_login(client: AsyncClient) -> None:
+    # 本文はログインの確認より先に読まれるので、大きな本文は読まずに断る
+    response = await client.post("/api/sites", content=b"{" + b" " * 70_000 + b"}", headers=JSON)
+    assert response.status_code == 413
+
+
+async def test_user_removed_from_allowlist_is_signed_out(logged_in: AsyncClient, database_url: str) -> None:
+    # 許可リストにいない人になったら（ここではメールアドレスを変えて試す）、セッションが残っていても入れない
+    db_query(database_url, "UPDATE users SET email = 'removed@example.com'")
+    response = await logged_in.get("/api/sites")
+    assert (response.status_code, response.json()["code"]) == (401, "not_allowed")
+    # 全部の端末からログアウトさせる
+    assert db_query(database_url, "SELECT count(*) FROM sessions") == [(0,)]
+
+
+@pytest.mark.parametrize(
+    "public_url",
+    ["", "https://glance.example.com", "http://localhost.example.com", "http://127.0.0.1.nip.io:3100"],
+)
+def test_fake_mode_only_on_local_url(database_url: str, public_url: str) -> None:
+    with pytest.raises(ValueError, match="手元でだけ使える"):
+        create_app(make_settings(database_url, public_url=public_url))
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{"host": "glance.example.com"}, {"cf-connecting-ip": "203.0.113.5"}],
+)
+async def test_fake_login_refuses_requests_from_outside(client: AsyncClient, headers: dict[str, str]) -> None:
+    # 設定の確認に加えて、Cloudflare を通った要求・手元でないホスト名の要求は、フェイクのログインを断る
+    response = await client.get("/api/auth/login", headers=headers)
+    assert response.headers["location"] == "/login?error=not_allowed"
+    assert (await client.get("/api/me")).status_code == 401

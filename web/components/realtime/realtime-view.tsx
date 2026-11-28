@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { LoadingIndicator } from "@/components/loading-indicator";
 import { Notice } from "@/components/notice";
@@ -9,72 +8,28 @@ import { PageBar, PageBody } from "@/components/page-bar";
 import { CountryBars, DeviceBars } from "@/components/realtime/breakdowns";
 import { EventBars } from "@/components/realtime/event-bars";
 import { MinuteChart } from "@/components/realtime/minute-chart";
-import { SeriesLegend } from "@/components/series-legend";
 import { SiteCards } from "@/components/realtime/site-cards";
 import { TopPages } from "@/components/realtime/top-pages";
 import { Segmented } from "@/components/segmented";
+import { SeriesLegend } from "@/components/series-legend";
+import { EmptySites, SelectPrompt, useSiteSelection } from "@/components/site-selection";
 import { Button } from "@/components/ui/button";
-import { api, errorMessage } from "@/lib/api";
-import { formatTime, siteColor } from "@/lib/format";
+import { formatTime } from "@/lib/format";
 import type { Metric, OkSite, Realtime } from "@/lib/types";
+import { useCachedData } from "@/lib/use-data";
 
 // 最後に取った結果（取り元ごと）。ほかの画面から戻ったときに、取り直すまでの間これを出す
-// （ブラウザのメモリだけ。読み込み直すと消える）。本物とデモの数字が混ざらないよう、取り元ごとに分ける
 const lastResults = new Map<string, Realtime>();
 
 // リアルタイムの画面の中身（docs/01_design/screen_design.md §3）。開いたときと「更新」を押したときだけ取る。
 // 本物（/api/realtime）とデモ（/api/demo/realtime）で共通にし、取り元だけを変える
 export function RealtimeView({ endpoint }: { endpoint: string }) {
-  const [data, setData] = useState<Realtime | null>(() => lastResults.get(endpoint) ?? null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, loading, reload } = useCachedData<Realtime>(endpoint, lastResults);
   const [metric, setMetric] = useState<Metric>("page_views");
-  // 外したサイト。初めは全部オンで、「更新」を押しても保つ（開き直すと全部オンに戻る）
-  const [unselected, setUnselected] = useState<Set<number>>(new Set());
-  // 合計の線。初めはオンで、「更新」を押しても保つ
-  const [showTotal, setShowTotal] = useState(true);
-
-  const fetchRealtime = useCallback(
-    () =>
-      api<Realtime>(endpoint)
-        .then(
-          (result) => {
-            lastResults.set(endpoint, result);
-            setData(result);
-            setError(null);
-          },
-          (e: unknown) => setError(errorMessage(e)),
-        )
-        .finally(() => setLoading(false)),
-    [endpoint],
-  );
-
-  useEffect(() => {
-    // 開いたときに1回取る
-    void fetchRealtime();
-  }, [fetchRealtime]);
-
-  function refresh() {
-    setLoading(true);
-    void fetchRealtime();
-  }
-
-  const colors = useMemo(
-    () => new Map((data?.sites ?? []).map((site, i) => [site.site_id, siteColor(i)])),
-    [data],
-  );
+  const { colors, unselected, toggle, showTotal, setShowTotal } = useSiteSelection(data?.sites);
   const okSites = (data?.sites ?? []).filter((s): s is OkSite => s.status === "ok");
   const selected = okSites.filter((s) => !unselected.has(s.site_id));
   const allFailed = data !== null && data.sites.length > 0 && okSites.length === 0;
-
-  function toggle(siteId: number, checked: boolean) {
-    setUnselected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.delete(siteId);
-      else next.add(siteId);
-      return next;
-    });
-  }
 
   return (
     <>
@@ -85,7 +40,7 @@ export function RealtimeView({ endpoint }: { endpoint: string }) {
           <span className="text-ink-2">直近30分</span>
           <div className="ml-auto flex items-center gap-3 text-ink-3">
             {data && <span>{formatTime(data.fetched_at)} に取得</span>}
-            <Button onClick={refresh} disabled={loading}>
+            <Button onClick={reload} disabled={loading}>
               {loading ? "取得中…" : "更新"}
             </Button>
           </div>
@@ -101,12 +56,7 @@ export function RealtimeView({ endpoint }: { endpoint: string }) {
         {loading && <LoadingIndicator />}
 
         {data !== null && data.sites.length === 0 && (
-          <div className="rounded-xl border bg-surface px-6 py-10 text-center">
-            <p>サイト設定から GA4 のプロパティを追加してください。</p>
-            <Link href="/settings/sites" className="mt-3 inline-block font-medium underline underline-offset-4">
-              サイト設定へ
-            </Link>
-          </div>
+          <EmptySites>サイト設定から GA4 のプロパティを追加してください。</EmptySites>
         )}
 
         {data !== null && data.sites.length > 0 && (
@@ -168,8 +118,4 @@ export function RealtimeView({ endpoint }: { endpoint: string }) {
       </PageBody>
     </>
   );
-}
-
-function SelectPrompt() {
-  return <p className="px-4 py-10 text-center text-ink-3">サイトを選んでください。</p>;
 }

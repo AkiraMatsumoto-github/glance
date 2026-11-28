@@ -31,7 +31,9 @@ export async function api<T>(path: string, options: Options = {}): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
     // 未ログイン・許可切れはログイン画面へ（画面の外の関数なので、ページを読み直して移る）
-    const query = data.code === "reauth_required" ? "?error=reauth" : "";
+    // 理由があれば、ログイン画面に出す（許可が切れた・許可リストから外れた）
+    const reasons: Record<string, string> = { reauth_required: "reauth", not_allowed: "not_allowed" };
+    const query = reasons[data.code] ? `?error=${reasons[data.code]}` : "";
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- コンポーネントの外なので router が使えない
     window.location.href = `/login${query}`;
     throw new ApiError(401, data.code ?? "unauthenticated", data.message ?? "");

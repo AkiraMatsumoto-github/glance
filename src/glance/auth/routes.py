@@ -6,6 +6,7 @@ Google ログインは FastAPI で受ける。フェイクモード（GLANCE_FAK
 
 import asyncio
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import RedirectResponse
@@ -20,7 +21,7 @@ from glance.auth.sessions import (
     set_session_cookie,
     upsert_user,
 )
-from glance.config import Settings
+from glance.config import LOCAL_HOSTS, Settings
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
@@ -51,12 +52,19 @@ async def _sign_in(request: Request, db: Db, google_sub: str, email: str) -> Red
     return response
 
 
+def _is_local_request(request: Request) -> bool:
+    """手元から直接来た要求か。Cloudflare を通った要求には CF-Connecting-IP が付き、ホスト名も手元のものではない。"""
+    host = urlsplit(f"http://{request.headers.get('host', '')}").hostname
+    return host in LOCAL_HOSTS and "cf-connecting-ip" not in request.headers
+
+
 @router.get("/auth/login")
 async def login(request: Request, db: Db, prompt: str | None = None) -> Response:
     settings = _settings(request)
     if settings.fake_google:
         emails = settings.allowed_email_list
-        if not emails:
+        # 手元からの要求だけ（設定の確認に加えて、外から届いた要求（Cloudflare 経由・別のホスト名）を断る）
+        if not emails or not _is_local_request(request):
             return _to_login("not_allowed")
         return await _sign_in(request, db, google_sub=f"fake:{emails[0]}", email=emails[0])
 

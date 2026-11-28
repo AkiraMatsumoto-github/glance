@@ -3,10 +3,12 @@
 import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { SelectPrompt } from "@/components/site-selection";
 import { SeriesLegend } from "@/components/series-legend";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatNumber, formatPercent } from "@/lib/format";
+import { formatNumber } from "@/lib/format";
+import { ctr, formatMetric } from "@/lib/seo-metrics";
 import type { SeoSite } from "@/lib/types";
 
 // クエリ・ページの一覧（docs/01_design/screen_design.md §7）。選んだサイトをまとめて、クリックの多い順に20件。
@@ -32,7 +34,7 @@ type Row = {
   clicks: number;
   impressions: number;
   position: number | null;
-  change: number | null; // 比べる期間との差。比べる期間の上位に入っていないときは null
+  change: number | null; // 比べる期間との差。比べないとき・比べる期間にそのサイトの数字が無いときは null
 };
 
 function rowsOf(kind: "query" | "page", sites: SeoSite[]): Row[] {
@@ -56,12 +58,15 @@ function rowsOf(kind: "query" | "page", sites: SeoSite[]): Row[] {
 }
 
 function sortRows(rows: Row[], order: Order): Row[] {
-  if (order === "up") return rows.filter((r) => (r.change ?? 0) > 0).sort((a, b) => b.change! - a.change!);
-  if (order === "down") return rows.filter((r) => (r.change ?? 0) < 0).sort((a, b) => a.change! - b.change!);
-  return [...rows].sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+  if (order === "clicks") return [...rows].sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+  // 増えた順は差の大きい順、減った順は減り方の大きい順。差のないもの・比べられないものは出さない
+  const sign = order === "up" ? 1 : -1;
+  const gain = (r: Row) => (r.change ?? 0) * sign;
+  return rows.filter((r) => gain(r) > 0).sort((a, b) => gain(b) - gain(a));
 }
 
-function formatChange(change: number | null): string {
+// クリックの差（+12、-3、±0）
+function formatClickDiff(change: number | null): string {
   if (change === null) return "—";
   if (change === 0) return "±0";
   return `${change > 0 ? "+" : "-"}${formatNumber(Math.abs(change))}`;
@@ -111,7 +116,7 @@ export function RankingTable({
       </div>
 
       {sites.length === 0 ? (
-        <p className="px-4 py-10 text-center text-ink-3">サイトを選んでください。</p>
+        <SelectPrompt />
       ) : shown.length === 0 ? (
         <p className="px-4 py-6 text-ink-3">
           {ORDERS[activeOrder].empty}
@@ -152,14 +157,14 @@ export function RankingTable({
                   {hasCompare && (
                     <TableCell
                       className={`${NUM} text-ink-2`}
-                      title={row.change === null ? "比べる期間の上位に入っていません" : undefined}
+                      title={row.change === null ? "比べる期間の数字がありません" : undefined}
                     >
-                      {formatChange(row.change)}
+                      {formatClickDiff(row.change)}
                     </TableCell>
                   )}
                   <TableCell className={NUM}>{formatNumber(row.impressions)}</TableCell>
-                  <TableCell className={NUM}>{row.impressions ? formatPercent(row.clicks / row.impressions) : "—"}</TableCell>
-                  <TableCell className={`${NUM} pr-4`}>{row.position === null ? "—" : row.position.toFixed(1)}</TableCell>
+                  <TableCell className={NUM}>{formatMetric(ctr(row), "ctr")}</TableCell>
+                  <TableCell className={`${NUM} pr-4`}>{formatMetric(row.position, "position")}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

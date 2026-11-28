@@ -1,5 +1,7 @@
-"""本物の GA4（Data API・Admin API）と Search Console のサイトの一覧。ログインした利用者の更新トークンで呼ぶ
-（data_sources.md §2・§3・§5）。"""
+"""本物の Google の呼び出し。GA4（Data API・Admin API）と Search Console（サイトの一覧・検索パフォーマンス・サイトマップ）。
+
+ログインした利用者の更新トークンで呼ぶ（data_sources.md §2・§3・§5）。
+"""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -90,6 +92,14 @@ class RealGoogleClient:
             raise GooglePermissionDenied() from e
         except api_errors.ResourceExhausted as e:
             raise GoogleQuotaExceeded() from e
+        except (
+            api_errors.ServiceUnavailable,
+            api_errors.DeadlineExceeded,
+            api_errors.InternalServerError,
+            api_errors.RetryError,
+        ) as e:
+            # Search Console（_gsc）と同じく、Google に届かない・Google 側のエラーはまとめて扱う
+            raise GoogleUnavailable(f"{type(e).__name__}: {e}") from e
 
     # Admin API
 

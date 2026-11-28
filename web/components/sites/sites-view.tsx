@@ -5,21 +5,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Notice } from "@/components/notice";
 import { PageBar, PageBody } from "@/components/page-bar";
+import { AddSiteDialog } from "@/components/sites/add-site-dialog";
+import { DeleteSiteDialog } from "@/components/sites/delete-site-dialog";
 import { BingDialog, GscDialog } from "@/components/sites/link-dialogs";
 import { LOCKED, Locked } from "@/components/sites/locked";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
-import type { GaAccount, GaProperty, Site } from "@/lib/types";
+import type { Site } from "@/lib/types";
 
 // サイト設定の中身（docs/01_design/screen_design.md §4・§6）。
 // 本物は /api のサイトを扱う。デモは /api/demo のダミーを見るだけで、追加・名前・並び・削除・紐づけはできない。
@@ -59,7 +53,7 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
     run(() => api(`/api/sites/${site.id}`, { method: "PATCH", json: { name } }));
   const move = (site: Site, position: number) =>
     run(() => api(`/api/sites/${site.id}`, { method: "PATCH", json: { position } }));
-
+  const remove = (site: Site) => run(() => api(`/api/sites/${site.id}`, { method: "DELETE" }));
 
   return (
     <>
@@ -164,32 +158,7 @@ export function SitesView({ demo = false }: { demo?: boolean }) {
         <GscDialog site={gscSite} base={base} demo={demo} onClose={() => setGscSite(null)} onSaved={load} />
         <BingDialog site={bingSite} base={base} demo={demo} onClose={() => setBingSite(null)} onSaved={load} />
 
-        <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>サイトを削除しますか？</DialogTitle>
-              <DialogDescription>
-                「{deleting?.name}」を削除します。取り込んだ Search Console・Bing の数字も一緒に消えます。Bing
-                の過去の数字は取り直せません。GA4・Search Console・Bing の側のデータは消えません。
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setDeleting(null)}>
-                やめる
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={async () => {
-                  const target = deleting;
-                  setDeleting(null);
-                  if (target) await run(() => api(`/api/sites/${target.id}`, { method: "DELETE" }));
-                }}
-              >
-                削除する
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <DeleteSiteDialog site={deleting} onClose={() => setDeleting(null)} onDelete={remove} />
       </PageBody>
     </>
   );
@@ -246,141 +215,5 @@ function LinkCell({ url, onEdit }: { url: string | null; onEdit: () => void }) {
         {url ? "変更" : "設定する"}
       </Button>
     </div>
-  );
-}
-
-// GA4 のプロパティを、アカウントごとにまとめて選ぶ。追加済みは選べない。
-// 紐づけの API があるときは、同じドメインの Search Console のサイトも一緒に紐づける（見つからなければ選ぶ）
-function AddSiteDialog({
-  propertiesUrl,
-  demo,
-  open,
-  onOpenChange,
-  onAdded,
-}: {
-  propertiesUrl: string;
-  demo: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onAdded: () => Promise<void>;
-}) {
-  const [accounts, setAccounts] = useState<GaAccount[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  // プロパティごとに選んだ Search Console のサイト。選んでいなければ、同じドメインのサイト
-  const [gscPicked, setGscPicked] = useState<Record<string, string>>({});
-  const withGsc = accounts?.some((a) => a.properties.some((p) => p.search_console !== null)) ?? false;
-  // 追加できるプロパティがあるのに Search Console のサイトの一覧を取れなかった（API を有効にしていないなど）
-  const gscUnavailable = !withGsc && (accounts?.some((a) => a.properties.some((p) => !p.added)) ?? false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    api<GaAccount[]>(propertiesUrl).then(
-      (result) => {
-        if (!cancelled) setAccounts(result);
-      },
-      (e: unknown) => {
-        if (!cancelled) setError(errorMessage(e));
-      },
-    );
-    return () => {
-      cancelled = true;
-      setAccounts(null);
-      setError(null);
-    };
-  }, [open, propertiesUrl]);
-
-  function gscValue(p: GaProperty): string {
-    return gscPicked[p.property_id] ?? p.search_console?.site_url ?? "";
-  }
-
-  async function add(p: GaProperty) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api("/api/sites", {
-        method: "POST",
-        json: { property_id: p.property_id, gsc_site_url: p.search_console ? gscValue(p) || null : null },
-      });
-      await onAdded();
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>サイトを追加</DialogTitle>
-          <DialogDescription>
-            ログインしたアカウントが見られる GA4 のプロパティから選びます。
-            {withGsc && "同じドメインの Search Console のサイトも一緒に紐づけます。"}
-          </DialogDescription>
-        </DialogHeader>
-        {error && <Notice>{error}</Notice>}
-        {gscUnavailable && (
-          <Notice kind="warning">
-            Search Console のサイトの一覧を取れませんでした（Search Console API を有効にしていないなど）。追加した後に、表の「設定する」から選べます。
-          </Notice>
-        )}
-        <div className="max-h-96 space-y-4 overflow-y-auto">
-          {accounts === null && !error && <p className="text-ink-3">読み込み中…</p>}
-          {accounts?.length === 0 && <p className="text-ink-3">見られるプロパティがありません。</p>}
-          {accounts?.map((account) => (
-            <div key={account.account_id}>
-              <div className="mb-1.5 text-xs font-medium text-ink-3">{account.name}</div>
-              <ul className="divide-y rounded-lg border">
-                {account.properties.map((p) => (
-                  <li key={p.property_id} className="px-3 py-2 text-sm">
-                    <div className="flex items-center gap-3">
-                      <span className="min-w-0 flex-1 truncate" title={p.name}>
-                        {p.name}
-                      </span>
-                      <span className="text-xs text-ink-3 tabular-nums">{p.property_id}</span>
-                      {p.added ? (
-                        <span className="w-14 text-right text-xs text-ink-3">追加済み</span>
-                      ) : (
-                        <Locked demo={demo}>
-                          <Button size="sm" className="w-14" disabled={demo || busy} onClick={() => add(p)}>
-                            追加
-                          </Button>
-                        </Locked>
-                      )}
-                    </div>
-                    {/* 一緒に紐づける Search Console のサイト。初めは同じドメインのもの（なければ「紐づけない」） */}
-                    {!p.added && p.search_console && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
-                        <span>Search Console</span>
-                        <Locked demo={demo}>
-                          <select
-                            aria-label={`${p.name}と一緒に紐づける Search Console のサイト`}
-                            value={gscValue(p)}
-                            onChange={(e) => setGscPicked((prev) => ({ ...prev, [p.property_id]: e.target.value }))}
-                            disabled={demo}
-                            className="h-7 max-w-64 rounded-md border bg-surface px-2 text-xs text-ink"
-                          >
-                            {p.search_console.candidates.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                            <option value="">紐づけない</option>
-                          </select>
-                        </Locked>
-                        {p.search_console.site_url === null && <span>同じドメインのサイトが見つかりません</span>}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

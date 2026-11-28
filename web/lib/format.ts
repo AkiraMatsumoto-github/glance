@@ -68,3 +68,7 @@ export const SERIES_COUNT = 8;
 export function siteColor(index: number): string {
   return index < SERIES_COUNT ? `var(--series-${index + 1})` : "var(--series-other)";
 }
+
+// 合計の線。サイトの色を使わず墨色（同 §2.2）。TOTAL_KEY はグラフの行で合計を入れる名前
+export const TOTAL_COLOR = "var(--ink)";
+export const TOTAL_KEY = "total";

@@ -14,6 +14,7 @@ from starlette.types import Scope
 from glance.auth.crypto import TokenCipher
 from glance.auth.routes import router as auth_router
 from glance.bing.client import BingClient, FakeBingClient, RealBingClient
+from glance.bing.routes import router as bing_router
 from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
 from glance.errors import AppError, app_error_handler
@@ -25,6 +26,8 @@ from glance.sites.links import router as links_router
 from glance.sites.routes import router as sites_router
 
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# 書き込みの本文の上限。本文はログインの確認より先に読まれるので、ログインしていない人の大きな本文を断る
+MAX_BODY_BYTES = 64 * 1024
 
 
 class PageFiles(StaticFiles):
@@ -82,6 +85,11 @@ def create_app(
                 return JSONResponse(
                     {"code": "unsupported_media_type", "message": "JSON で送ってください"}, status_code=415
                 )
+            # 長さの分からない（分割して送る）本文も、読まずに断る
+            length = request.headers.get("content-length")
+            chunked = "chunked" in request.headers.get("transfer-encoding", "").lower()
+            if (length is not None and (not length.isdigit() or int(length) > MAX_BODY_BYTES)) or (length is None and chunked):
+                return JSONResponse({"code": "payload_too_large", "message": "送る内容が大きすぎます"}, status_code=413)
         response = await call_next(request)
         if is_api:
             response.headers["Cache-Control"] = "no-store"
@@ -90,6 +98,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(sites_router)
     app.include_router(links_router)
+    app.include_router(bing_router)
     app.include_router(realtime_router)
     app.include_router(seo_router)
 

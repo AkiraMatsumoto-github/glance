@@ -5,11 +5,7 @@ from httpx import AsyncClient
 
 from glance.google.fake import ERROR_PROPERTY_ID, FakeGoogleClient
 from glance.google.client import GooglePermissionDenied, GoogleQuotaExceeded, MinuteRow, ReauthRequired
-
-
-async def add(client: AsyncClient, property_id: str) -> None:
-    response = await client.post("/api/sites", json={"property_id": property_id})
-    assert response.status_code == 201, response.text
+from tests.conftest import add_site, db_query
 
 
 async def test_requires_login(client: AsyncClient) -> None:
@@ -23,8 +19,8 @@ async def test_no_sites(logged_in: AsyncClient) -> None:
 
 
 async def test_sites_in_order_with_filled_minutes(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
-    await add(logged_in, "900000002")
+    await add_site(logged_in, "900000001")
+    await add_site(logged_in, "900000002")
     body = (await logged_in.get("/api/realtime")).json()
     assert [s["name"] for s in body["sites"]] == ["LogiShift", "TechShift"]
     for site in body["sites"]:
@@ -34,7 +30,7 @@ async def test_sites_in_order_with_filled_minutes(logged_in: AsyncClient) -> Non
 
 
 async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]
     devices = {d["key"] for d in site["devices"]}
     assert devices <= {"mobile", "desktop", "tablet"} and "mobile" in devices
@@ -48,7 +44,7 @@ async def test_device_and_country_breakdowns(logged_in: AsyncClient) -> None:
 
 
 async def test_events(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]
     events = site["events"]
     assert 0 < len(events) <= 20
@@ -60,8 +56,8 @@ async def test_events(logged_in: AsyncClient) -> None:
 
 
 async def test_failed_site_does_not_break_others(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
-    await add(logged_in, ERROR_PROPERTY_ID)
+    await add_site(logged_in, "900000001")
+    await add_site(logged_in, ERROR_PROPERTY_ID)
     body = (await logged_in.get("/api/realtime")).json()
     ok, failed = body["sites"]
     assert ok["status"] == "ok"
@@ -78,7 +74,7 @@ class SparseFake(FakeGoogleClient):
 
 @pytest.mark.parametrize("google", [SparseFake(latency=(0, 0))])
 async def test_missing_minutes_are_zero(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     minutes = (await logged_in.get("/api/realtime")).json()["sites"][0]["per_minute"]
     values = {m["minutes_ago"]: (m["page_views"], m["active_users"]) for m in minutes}
     assert values[0] == (5, 3)
@@ -104,7 +100,7 @@ class RaisingFake(FakeGoogleClient):
     ],
 )
 async def test_error_kinds(logged_in: AsyncClient, code: str) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]
     assert site["status"] == "error"
     assert site["error"] == code
@@ -112,7 +108,7 @@ async def test_error_kinds(logged_in: AsyncClient, code: str) -> None:
 
 @pytest.mark.parametrize("google", [RaisingFake(ReauthRequired())])
 async def test_reauth_required(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     response = await logged_in.get("/api/realtime")
     assert response.status_code == 401
     assert response.json()["code"] == "reauth_required"
@@ -126,21 +122,23 @@ class SlowFake(FakeGoogleClient):
 
 @pytest.mark.parametrize("google", [SlowFake(latency=(0, 0))])
 async def test_slow_site_times_out(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000001")
+    await add_site(logged_in, "900000001")
     site = (await logged_in.get("/api/realtime")).json()["sites"][0]
     assert site["error"] == "timeout"
 
 
 async def test_demo_needs_no_login_and_touches_no_data(client: AsyncClient, database_url: str) -> None:
-    import psycopg
-    from sqlalchemy.engine import make_url
-
     response = await client.get("/api/demo/realtime")
     assert response.status_code == 200
     body = response.json()
     assert [s["name"] for s in body["sites"]] == ["デモサイト A", "デモサイト B", "デモサイト C", "デモサイト D", "デモサイト E"]
     assert all(s["status"] == "ok" for s in body["sites"])
     assert response.headers["cache-control"] == "no-store"
-    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(url) as conn:
-        assert conn.execute("SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM sites)").fetchone() == (0, 0)
+    assert db_query(database_url, "SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM sites)") == [(0, 0)]
+
+
+async def test_other_tenant_sites_are_not_fetched(logged_in: AsyncClient, database_url: str) -> None:
+    await add_site(logged_in, "900000001")
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    db_query(database_url, "UPDATE sites SET tenant_id = 2")
+    assert (await logged_in.get("/api/realtime")).json()["sites"] == []

@@ -45,7 +45,7 @@ export default function LoginPage() {
             <Link href="/demo" className={buttonVariants({ variant: "outline", size: "lg", className: "w-full" })}>
               ログインせずにデモを見る
             </Link>
-            <p className="mt-2 text-xs text-ink-3">ダミーの数字で、リアルタイムの画面を見られます。</p>
+            <p className="mt-2 text-xs text-ink-3">ダミーの数字で、リアルタイム・SEO・サイト設定の画面を見られます。</p>
           </div>
         </CardContent>
       </Card>

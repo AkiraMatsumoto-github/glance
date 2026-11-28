@@ -11,6 +11,7 @@ from glance.db.session import create_engine, create_sessionmaker
 from glance.google.fake import FakeGoogleClient
 from glance.sync.runner import Syncer
 from glance.sync.sitemap import FakeSitemapFetcher
+from tests.conftest import EMAIL
 
 
 def _idle(page: Page) -> None:
@@ -77,6 +78,7 @@ def test_link_import_and_seo(page: Page, base_url: str, database_url: str) -> No
                 None,
                 date.today(),
                 sitemap_fetcher=FakeSitemapFetcher(),
+                allowed_emails=[EMAIL],
             )
             outcomes = await syncer.run({"gsc"})
             assert all(o.error is None for o in outcomes), outcomes

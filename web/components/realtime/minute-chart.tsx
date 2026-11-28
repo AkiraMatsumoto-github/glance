@@ -3,12 +3,10 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { TooltipContentProps } from "recharts";
 
-import { formatCompact, formatNumber } from "@/lib/format";
+import { TOTAL_COLOR, TOTAL_KEY, formatCompact, formatNumber } from "@/lib/format";
 import type { Metric, OkSite } from "@/lib/types";
 
 const METRIC_LABELS: Record<Metric, string> = { page_views: "PV", active_users: "UU" };
-const TOTAL_KEY = "total";
-const TOTAL_COLOR = "var(--ink)"; // 合計はサイトの色を使わず墨色（design_guideline.md §2.2）
 
 function minuteLabel(minutesAgo: number): string {
   return minutesAgo === 0 ? "今" : `${minutesAgo}分前`;

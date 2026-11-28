@@ -7,11 +7,10 @@ from sqlalchemy import select
 
 from glance.auth.deps import CurrentUser, Db
 from glance.db.models import Connection, Site
-from glance.errors import AppError
-from glance.google.fake import DEMO_SITES, FakeGoogleClient
+from glance.google.access import google_client, reauth_error
 from glance.google.client import ReauthRequired
+from glance.google.fake import DEMO_SITES, FakeGoogleClient
 from glance.realtime.service import SiteTarget, fetch_realtime
-from glance.google.access import google_client
 
 router = APIRouter(prefix="/api")
 
@@ -31,7 +30,7 @@ async def realtime(request: Request, db: Db, user: CurrentUser) -> dict[str, Any
     try:
         return await fetch_realtime(client, targets, timeout=request.app.state.realtime_timeout)
     except ReauthRequired as e:
-        raise AppError(401, "reauth_required", "Google の許可が切れました。ログインし直してください") from e
+        raise reauth_error() from e
 
 
 # デモはログイン不要。ダミーの数字だけを返し、DB・Google・利用者のデータには触れない

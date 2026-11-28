@@ -1,31 +1,17 @@
 """サイトと Search Console・Bing の紐づけ（technical_design.md §6.4）。"""
 
 import httpx
-import psycopg
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.engine import make_url
 
 from glance.bing.client import BingKeyInvalid, BingUnavailable, FakeBingClient, RealBingClient
 from glance.google.fake import FakeGoogleClient
 from glance.google.client import GoogleQuotaExceeded, GoogleUnavailable, GscApiDisabled
-from glance.sites.links import match_gsc_site
+from glance.sites.gsc import match_gsc_site
+from tests.conftest import add_site, db_query
 
-JSON = {"content-type": "application/json"}
 SITES_A = ["https://a.example/", "https://b.example/"]
 SITES_B = ["https://c.example/"]
-
-
-def _query(database_url: str, sql: str) -> list[tuple]:
-    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(url) as conn:
-        return conn.execute(sql).fetchall()
-
-
-async def add(client: AsyncClient, property_id: str, gsc_site_url: str | None = None) -> dict:
-    response = await client.post("/api/sites", json={"property_id": property_id, "gsc_site_url": gsc_site_url})
-    assert response.status_code == 201, response.text
-    return response.json()
 
 
 def test_match_gsc_site() -> None:
@@ -45,7 +31,7 @@ def test_match_gsc_site() -> None:
 
 
 async def test_properties_suggest_gsc_site(logged_in: AsyncClient) -> None:
-    await add(logged_in, "900000005")
+    await add_site(logged_in, "900000005")
     props = {p["property_id"]: p for a in (await logged_in.get("/api/ga4/properties")).json() for p in a["properties"]}
     # LogiShift はドメインと URL の両方があり、ドメインを選ぶ。TechShift は URL だけ。ConShift は見つからない
     assert props["900000001"]["search_console"]["site_url"] == "sc-domain:logishift.example"
@@ -57,9 +43,9 @@ async def test_properties_suggest_gsc_site(logged_in: AsyncClient) -> None:
 
 
 async def test_add_site_with_gsc_site(logged_in: AsyncClient, database_url: str) -> None:
-    site = await add(logged_in, "900000001", "sc-domain:logishift.example")
+    site = await add_site(logged_in, "900000001", "sc-domain:logishift.example")
     assert site["links"] == {"gsc_site_url": "sc-domain:logishift.example", "bing_site_url": None, "bing_key_id": None}
-    assert _query(database_url, "SELECT source, auth_method, user_id FROM connections ORDER BY source") == [
+    assert db_query(database_url, "SELECT source, auth_method, user_id FROM connections ORDER BY source") == [
         ("ga4", "google", 1),
         ("gsc", "google", 1),
     ]
@@ -71,23 +57,23 @@ async def test_add_site_with_gsc_site(logged_in: AsyncClient, database_url: str)
 
 
 async def test_link_and_unlink_gsc(logged_in: AsyncClient, database_url: str) -> None:
-    site = await add(logged_in, "900000002")
+    site = await add_site(logged_in, "900000002")
     choice = (await logged_in.get(f"/api/sites/{site['id']}/gsc")).json()
     assert choice["current"] is None
     assert choice["suggested"] == "https://techshift.example/"
     assert choice["suggested"] in choice["candidates"]
 
     linked = await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": choice["suggested"]})
-    assert linked.status_code == 200
+    assert linked.status_code == 204
     assert (await logged_in.get("/api/sites")).json()[0]["links"]["gsc_site_url"] == "https://techshift.example/"
-    assert _query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(1,)]
+    assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(1,)]
 
     bad = await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "sc-domain:nope.example"})
     assert bad.json()["code"] == "unknown_gsc_site"
 
     await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": None})
     assert (await logged_in.get("/api/sites")).json()[0]["links"]["gsc_site_url"] is None
-    assert _query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(0,)]
+    assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(0,)]
 
 
 class GscDisabled(FakeGoogleClient):
@@ -100,7 +86,7 @@ async def test_gsc_api_disabled(logged_in: AsyncClient) -> None:
     # GA4 のプロパティの追加はできる。Search Console を選ぶところで、有効にするよう伝える
     props = [p for a in (await logged_in.get("/api/ga4/properties")).json() for p in a["properties"]]
     assert all(p["search_console"] is None for p in props)
-    site = await add(logged_in, "900000001")
+    site = await add_site(logged_in, "900000001")
     response = await logged_in.get(f"/api/sites/{site['id']}/gsc")
     assert response.status_code == 503
     assert response.json()["code"] == "gsc_api_disabled"
@@ -111,7 +97,7 @@ async def test_gsc_api_disabled(logged_in: AsyncClient) -> None:
 
 @pytest.mark.parametrize("bing", [FakeBingClient({"key-aaaa-1111": SITES_A, "key-bbbb-2222": SITES_B})])
 async def test_bing_keys_and_link(logged_in: AsyncClient, database_url: str) -> None:
-    site = await add(logged_in, "900000001")
+    site = await add_site(logged_in, "900000001")
 
     # 使えないキーは保存しない
     bad = await logged_in.post("/api/bing/keys", json={"name": "LogiShift 用", "key": "key-wrong-0000"})
@@ -123,7 +109,7 @@ async def test_bing_keys_and_link(logged_in: AsyncClient, database_url: str) -> 
     key = created.json()
     # キーそのものは返さず、DB にも暗号化して入れる
     assert key == {"id": key["id"], "name": "LogiShift 用", "last4": "1111"}
-    [(stored,)] = _query(database_url, "SELECT key_encrypted FROM bing_keys")
+    [(stored,)] = db_query(database_url, "SELECT key_encrypted FROM bing_keys")
     assert "key-aaaa-1111" not in stored
     dup = await logged_in.post("/api/bing/keys", json={"name": "LogiShift 用", "key": "key-bbbb-2222"})
     assert dup.json()["code"] == "name_taken"
@@ -136,11 +122,11 @@ async def test_bing_keys_and_link(logged_in: AsyncClient, database_url: str) -> 
     other = await logged_in.put(f"/api/sites/{site['id']}/bing", json={"key_id": key["id"], "site_url": SITES_B[0]})
     assert other.json()["code"] == "unknown_bing_site"
     linked = await logged_in.put(f"/api/sites/{site['id']}/bing", json={"key_id": key["id"], "site_url": SITES_A[0]})
-    assert linked.status_code == 200
+    assert linked.status_code == 204
     links = (await logged_in.get("/api/sites")).json()[0]["links"]
     assert links["bing_site_url"] == SITES_A[0]
     assert links["bing_key_id"] == key["id"]
-    assert _query(database_url, "SELECT auth_method, user_id, bing_key_id FROM connections WHERE source = 'bing'") == [
+    assert db_query(database_url, "SELECT auth_method, user_id, bing_key_id FROM connections WHERE source = 'bing'") == [
         ("api_key", None, key["id"])
     ]
 
@@ -154,17 +140,15 @@ async def test_bing_keys_and_link(logged_in: AsyncClient, database_url: str) -> 
     await logged_in.put(f"/api/sites/{site['id']}/bing", json={"key_id": None, "site_url": None})
     links = (await logged_in.get("/api/sites")).json()[0]["links"]
     assert (links["bing_site_url"], links["bing_key_id"]) == (None, None)
-    assert _query(database_url, "SELECT count(*) FROM connections WHERE source = 'bing'") == [(0,)]
+    assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'bing'") == [(0,)]
     assert len((await logged_in.get("/api/bing/keys")).json()) == 1
 
 
 async def test_other_tenant_cannot_use_links(logged_in: AsyncClient, database_url: str) -> None:
-    site = await add(logged_in, "900000001")
+    site = await add_site(logged_in, "900000001")
     key = (await logged_in.post("/api/bing/keys", json={"name": "k", "key": "good-key-1234"})).json()
-    url = make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-    with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute("INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-        conn.execute("UPDATE users SET tenant_id = 2")
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    db_query(database_url, "UPDATE users SET tenant_id = 2")
     assert (await logged_in.get("/api/bing/keys")).json() == []
     assert (await logged_in.get(f"/api/bing/keys/{key['id']}/sites")).status_code == 404
     assert (await logged_in.put(f"/api/bing/keys/{key['id']}", json={"key": "good-key-5678"})).status_code == 404
@@ -239,6 +223,44 @@ async def test_gsc_trouble_still_lets_sites_be_added(logged_in: AsyncClient, sta
     # 「サイトを追加」は開ける（Search Console の選択は出さない）。紐づけのダイアログは理由を出す
     props = [p for a in (await logged_in.get("/api/ga4/properties")).json() for p in a["properties"]]
     assert props and all(p["search_console"] is None for p in props)
-    site = await add(logged_in, "900000001")
+    site = await add_site(logged_in, "900000001")
     response = await logged_in.get(f"/api/sites/{site['id']}/gsc")
     assert (response.status_code, response.json()["code"]) == (status, code)
+
+
+async def test_other_tenant_key_cannot_be_used_on_own_site(logged_in: AsyncClient, database_url: str) -> None:
+    # 自分のサイトに、別の顧客のキーの ID を本文で渡しても使えない（あるかどうかもわからない）
+    site = await add_site(logged_in, "900000001")
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    [(other_key,)] = db_query(
+        database_url, "INSERT INTO bing_keys (tenant_id, name, key_encrypted, last4) VALUES (2, 'x', 'x', 'xxxx') RETURNING id"
+    )
+    response = await logged_in.put(
+        f"/api/sites/{site['id']}/bing", json={"key_id": other_key, "site_url": "https://www.logishift.example/"}
+    )
+    assert response.status_code == 404
+    assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'bing'") == [(0,)]
+
+
+async def test_other_tenant_site_cannot_be_linked(logged_in: AsyncClient, database_url: str) -> None:
+    site = await add_site(logged_in, "900000001")
+    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    db_query(database_url, "UPDATE sites SET tenant_id = 2")
+    response = await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "sc-domain:logishift.example"})
+    assert response.status_code == 404
+    assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(0,)]
+
+
+class StreamsDown(FakeGoogleClient):
+    """GA4 の Admin API（データストリーム）が落ちている。"""
+
+    async def web_stream_hosts(self, property_id: str) -> list[str]:
+        raise GoogleUnavailable("ServiceUnavailable: down")
+
+
+@pytest.mark.parametrize("google", [StreamsDown(latency=(0, 0))])
+async def test_admin_api_down_means_no_suggestion(logged_in: AsyncClient) -> None:
+    # 同じドメインのサイトを探せなくても、紐づけのダイアログは開ける（おすすめなし）
+    site = await add_site(logged_in, "900000001")
+    choice = (await logged_in.get(f"/api/sites/{site['id']}/gsc")).json()
+    assert choice["suggested"] is None and choice["candidates"]

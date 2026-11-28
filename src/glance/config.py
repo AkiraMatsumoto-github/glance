@@ -4,10 +4,11 @@
 """
 
 from functools import cached_property
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-LOCAL_URL_PREFIXES = ("http://localhost", "http://127.0.0.1")
+LOCAL_HOSTS = ("localhost", "127.0.0.1")
 
 
 class Settings(BaseSettings):
@@ -34,7 +35,10 @@ class Settings(BaseSettings):
     def check(self) -> None:
         """起動してはいけない組み合わせを止める。"""
         if self.fake_google:
-            if self.public_url and not self.public_url.startswith(LOCAL_URL_PREFIXES):
+            # 誰でもログインできてしまうので、本番で有効にならないよう、手元の URL のときだけにする
+            # （前方一致にしない。http://localhost.example.com などを通さないため。URL が空でも通さない）
+            parts = urlsplit(self.public_url)
+            if parts.scheme != "http" or parts.hostname not in LOCAL_HOSTS:
                 raise ValueError(
                     "GLANCE_FAKE_GOOGLE は手元でだけ使える（GLANCE_PUBLIC_URL が http://localhost か http://127.0.0.1 のとき）"
                 )

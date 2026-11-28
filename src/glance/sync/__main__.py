@@ -18,7 +18,8 @@ from glance.bing.client import FakeBingClient, RealBingClient
 from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
 from glance.google.factory import default_google_factory
-from glance.sync.runner import Outcome, Syncer
+from glance.sync.common import Outcome
+from glance.sync.runner import Syncer
 from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -37,6 +38,7 @@ async def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     settings = Settings()  # type: ignore[call-arg]
+    settings.check()  # API と同じく、起動してはいけない組み合わせ（本番でのフェイクモードなど）を止める
     engine = create_engine(settings.database_url)
     cipher = TokenCipher(settings.token_key) if settings.token_key else None
     syncer = Syncer(
@@ -46,6 +48,7 @@ async def main(argv: list[str]) -> int:
         cipher,
         today=datetime.now(JST).date(),
         sitemap_fetcher=FakeSitemapFetcher() if settings.fake_google else HttpSitemapFetcher(),
+        allowed_emails=settings.allowed_email_list,
         report=_print,
     )
     sources = {"gsc", "bing"} if args.source == "all" else {args.source}
