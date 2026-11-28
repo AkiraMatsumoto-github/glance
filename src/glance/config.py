@@ -6,6 +6,7 @@
 from functools import cached_property
 from urllib.parse import urlsplit
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1")
@@ -14,13 +15,14 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GLANCE_", env_file=".env", extra="ignore")
 
-    database_url: str
+    # 秘密の値は SecretStr にし、設定を表示・ログに出しても値が出ないようにする（使うところで get_secret_value()）
+    database_url: SecretStr  # 接続先の URI に DB のパスワードが入る
     allowed_emails: str = ""
     public_url: str = ""
     fake_google: bool = False
     google_client_id: str = ""
-    google_client_secret: str = ""
-    token_key: str = ""
+    google_client_secret: SecretStr = SecretStr("")
+    token_key: SecretStr = SecretStr("")
     # 画面（Next.js で書き出した静的ファイル）の置き場所。無ければ API だけを出す
     static_dir: str = "web/out"
 
@@ -48,8 +50,8 @@ class Settings(BaseSettings):
             name
             for name, value in (
                 ("GLANCE_GOOGLE_CLIENT_ID", self.google_client_id),
-                ("GLANCE_GOOGLE_CLIENT_SECRET", self.google_client_secret),
-                ("GLANCE_TOKEN_KEY", self.token_key),
+                ("GLANCE_GOOGLE_CLIENT_SECRET", self.google_client_secret.get_secret_value()),
+                ("GLANCE_TOKEN_KEY", self.token_key.get_secret_value()),
                 ("GLANCE_PUBLIC_URL", self.public_url),
             )
             if not value

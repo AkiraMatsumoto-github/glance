@@ -26,7 +26,7 @@ TOKEN_KEY = Fernet.generate_key().decode()
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
-    base = make_url(Settings().database_url)  # type: ignore[call-arg]
+    base = make_url(Settings().database_url.get_secret_value())  # type: ignore[call-arg]
     test_url = base.set(database=TEST_DB)
     admin = base.set(drivername="postgresql", database="postgres")
     with psycopg.connect(admin.render_as_string(hide_password=False), autocommit=True) as conn:
@@ -55,6 +55,12 @@ def clean_database(database_url: str) -> None:
     """テストの前に、テスト用の DB を空にする（顧客は、マイグレーションで作る1つだけにする）。"""
     db_query(database_url, "TRUNCATE sessions, connections, sites, bing_keys, users RESTART IDENTITY CASCADE")
     db_query(database_url, "DELETE FROM tenants WHERE id <> 1")
+
+
+def other_tenant(database_url: str) -> int:
+    """別の顧客を作り、その ID を返す（新しい人の顧客と ID がぶつからないよう、ID は DB に振らせる）。"""
+    [(tenant_id,)] = db_query(database_url, "INSERT INTO tenants (name) VALUES ('別の顧客') RETURNING id")
+    return tenant_id
 
 
 async def add_site(client: AsyncClient, property_id: str, gsc_site_url: str | None = None) -> dict:

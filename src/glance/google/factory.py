@@ -30,7 +30,7 @@ def default_google_factory(settings: Settings, cipher: TokenCipher | None) -> Go
         if cached and cached[0] == encrypted:
             return cached[1]
         credentials = make_credentials(
-            cipher.decrypt(encrypted), settings.google_client_id, settings.google_client_secret
+            cipher.decrypt(encrypted), settings.google_client_id, settings.google_client_secret.get_secret_value()
         )
         client = RealGoogleClient(credentials)
         cache[user.id] = (encrypted, client)

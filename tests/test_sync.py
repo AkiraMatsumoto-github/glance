@@ -2,6 +2,12 @@
 
 from datetime import date, timedelta
 
+import ipaddress
+import socket
+import tracemalloc
+
+import anyio
+import httpcore
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -12,9 +18,17 @@ from glance.google.client import GoogleQuotaExceeded, GscRow
 from glance.sync import gsc
 from glance.sync.gsc import GscSync, gsc_values, months_ago
 from glance.sync.runner import Syncer
-from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher, sitemap_paths
+from glance.sync.sitemap import (
+    FakeSitemapFetcher,
+    HttpSitemapFetcher,
+    PublicOnlyBackend,
+    is_public,
+    parse_sitemap,
+    sitemap_paths,
+    within,
+)
 from glance.sync.values import bing_date, country_code, device, page_path
-from tests.conftest import add_site, db_query
+from tests.conftest import add_site, db_query, other_tenant
 
 TODAY = date(2026, 11, 20)
 
@@ -242,8 +256,8 @@ async def test_seo_report(app: FastAPI, logged_in: AsyncClient, database_url: st
 
 async def test_seo_report_is_per_tenant(app: FastAPI, logged_in: AsyncClient, database_url: str) -> None:
     await linked_site(logged_in)
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    db_query(database_url, "UPDATE users SET tenant_id = 2")
+    other = other_tenant(database_url)
+    db_query(database_url, "UPDATE users SET tenant_id = %s", (other,))
     assert (await logged_in.get("/api/seo")).json()["sites"] == []
 
 
@@ -432,11 +446,95 @@ async def test_sitemap_stays_inside_the_site() -> None:
         await sitemap_paths(fetcher, ["https://cdn.example/sitemap.xml"], "sc-domain:a.example")
 
 
+def test_sitemap_urls_only_on_default_ports() -> None:
+    assert within("https://a.example/s.xml", "a.example") and within("https://a.example:443/s.xml", "a.example")
+    # ほかのポート（Glance 自身・同居するサービスなど）は読まない
+    assert not within("https://a.example:8101/s.xml", "a.example")
+    assert not within("http://a.example:5432/", "a.example")
+    assert not within("https://a.example:x/", "a.example")
+
+
+def test_only_public_addresses() -> None:
+    assert all(is_public(ipaddress.ip_address(a)) for a in ["8.8.8.8", "2606:4700::1111"])
+    inside = [
+        "127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
+        "224.0.0.1", "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1",
+    ]
+    assert not any(is_public(ipaddress.ip_address(a)) for a in inside)
+
+
+@pytest.mark.parametrize("url", ["http://localhost/sitemap.xml", "http://127.0.0.1/sitemap.xml", "http://[::1]/sitemap.xml"])
+async def test_sitemap_fetch_refuses_internal_hosts(url: str) -> None:
+    # 本物の取得（差し替えない transport）で、名前解決した先がサーバーの内側なら、つながずに断る
+    with pytest.raises(httpx.ConnectError, match="公開されていない住所"):
+        await HttpSitemapFetcher().fetch(url, lambda _url: True)
+
+
+def _addresses(*ips: str) -> list[tuple]:
+    return [
+        (socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_STREAM, 0, "", (ip, 443)) for ip in ips
+    ]
+
+
+async def test_public_only_backend_connects_to_the_checked_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    connected: list[tuple[str, int]] = []
+
+    class Inner:
+        async def connect_tcp(self, host: str, port: int, **_kwargs: object) -> str:
+            connected.append((host, port))
+            return "stream"
+
+    backend = PublicOnlyBackend()
+    backend._backend = Inner()  # type: ignore[assignment]
+
+    async def resolve(host: str, port: int, **_kwargs: object) -> list[tuple]:
+        return _addresses("2606:4700::1111", "8.8.8.8")
+
+    monkeypatch.setattr(anyio, "getaddrinfo", resolve)
+    # 確かめた IP（IPv4 から）に、名前ではなく IP でつなぐ（つなぐときに名前解決し直さない）
+    assert await backend.connect_tcp("a.example", 443) == "stream"
+    assert connected == [("8.8.8.8", 443)]
+
+    # 1つでも内側の住所が混ざっていたら、つながない
+    async def mixed(host: str, port: int, **_kwargs: object) -> list[tuple]:
+        return _addresses("8.8.8.8", "10.0.0.5")
+
+    monkeypatch.setattr(anyio, "getaddrinfo", mixed)
+    with pytest.raises(httpcore.ConnectError, match="公開されていない住所"):
+        await backend.connect_tcp("a.example", 443)
+    assert len(connected) == 1
+
+
+def test_parse_sitemap() -> None:
+    ns = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
+    body = f"<?xml version='1.0'?><urlset {ns}><url><loc> https://a.example/x </loc><lastmod>2026-11-01</lastmod></url></urlset>"
+    assert parse_sitemap(body.encode()) == ("urlset", ["https://a.example/x"])
+    # 名前空間に接頭辞を付けた書き方も読む
+    prefixed = '<sm:urlset xmlns:sm="http://www.sitemaps.org/schemas/sitemap/0.9"><sm:url><sm:loc>https://a.example/</sm:loc></sm:url></sm:urlset>'
+    assert parse_sitemap(prefixed.encode()) == ("urlset", ["https://a.example/"])
+    # 実体の宣言があれば読まない（実体の展開でメモリを使わせる XML を断つ）
+    bomb = b'<?xml version="1.0"?><!DOCTYPE u [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;&a;">]><urlset><url><loc>&b;</loc></url></urlset>'
+    with pytest.raises(ValueError, match="実体の宣言"):
+        parse_sitemap(bomb)
+
+
+def test_parse_sitemap_does_not_build_a_tree() -> None:
+    # loc 以外の要素がどれだけあっても、メモリをほとんど使わない（木を作ると、この大きさで数十 MB 使う）
+    body = b"<urlset>" + b"<a/>" * 300_000 + b"<url><loc>https://a.example/</loc></url></urlset>"
+    tracemalloc.start()
+    try:
+        assert parse_sitemap(body) == ("urlset", ["https://a.example/"])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 5 * 1024 * 1024
+
+
 async def test_sync_skips_users_and_keys_that_are_not_allowed(
     app: FastAPI, logged_in: AsyncClient, database_url: str
 ) -> None:
     await linked_site(logged_in)
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    other = other_tenant(database_url)
     # 許可リストから外した人の許可では、Search Console を取らない
     outcomes = await Syncer(
         app.state.sessionmaker, app.state.google_factory, app.state.bing_client, app.state.cipher, TODAY,
@@ -446,7 +544,7 @@ async def test_sync_skips_users_and_keys_that_are_not_allowed(
     # 取らなかった表は、サイトマップも含めて取得ログに残る
     assert {o.table for o in outcomes} == {"gsc_site", "gsc_page", "gsc_query_page", "sitemap_urls"}
     # キーがほかの顧客のものなら、Bing を取らない（API は必ず同じ顧客のキーを書くが、念のため）
-    db_query(database_url, "UPDATE bing_keys SET tenant_id = 2")
+    db_query(database_url, "UPDATE bing_keys SET tenant_id = %s", (other,))
     outcomes = await syncer(app).run({"bing"})
     assert outcomes and all("顧客のものではありません" in (o.error or "") for o in outcomes)
     assert db_query(database_url, "SELECT count(*) FROM gsc_site") == [(0,)]

@@ -1,6 +1,6 @@
 from httpx import AsyncClient
 
-from tests.conftest import JSON, add_site, db_query
+from tests.conftest import JSON, add_site, db_query, other_tenant
 
 async def test_requires_login(client: AsyncClient) -> None:
     assert (await client.get("/api/sites")).status_code == 401
@@ -68,8 +68,8 @@ async def test_rename_move_delete(logged_in: AsyncClient, database_url: str) -> 
 
 async def test_other_tenant_cannot_see_sites(logged_in: AsyncClient, database_url: str) -> None:
     site = await add_site(logged_in, "900000001")
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    db_query(database_url, "UPDATE users SET tenant_id = 2")
+    other = other_tenant(database_url)
+    db_query(database_url, "UPDATE users SET tenant_id = %s", (other,))
     assert (await logged_in.get("/api/sites")).json() == []
     assert (await logged_in.patch(f"/api/sites/{site['id']}", json={"name": "x"})).status_code == 404
     assert (await logged_in.delete(f"/api/sites/{site['id']}", headers=JSON)).status_code == 404

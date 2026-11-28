@@ -19,6 +19,7 @@ from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
 from glance.errors import AppError, app_error_handler
 from glance.google.factory import GoogleFactory, default_google_factory
+from glance.logs import quiet_secret_logs
 from glance.realtime.routes import router as realtime_router
 from glance.realtime.service import SITE_TIMEOUT_SECONDS
 from glance.seo.routes import router as seo_router
@@ -28,6 +29,13 @@ from glance.sites.routes import router as sites_router
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # 書き込みの本文の上限。本文はログインの確認より先に読まれるので、ログインしていない人の大きな本文を断る
 MAX_BODY_BYTES = 64 * 1024
+# 全部の応答（画面・API）に付ける。ほかのサイトのフレームに埋め込ませない（クリックを盗む攻撃を防ぐ）。
+# 送ったファイルの種類を、ブラウザに推測させない（2026-11-28 セキュリティレビューの対応）
+SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+}
 
 
 class PageFiles(StaticFiles):
@@ -60,14 +68,16 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()  # type: ignore[call-arg]
     settings.check()
+    quiet_secret_logs()
 
     app = FastAPI(title="Glance", docs_url=None, redoc_url=None, openapi_url=None)
-    engine = create_engine(settings.database_url)
+    engine = create_engine(settings.database_url.get_secret_value())
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
     # 更新トークンの暗号化（フェイクモードで鍵がないときは使わない）
-    app.state.cipher = TokenCipher(settings.token_key) if settings.token_key else None
+    token_key = settings.token_key.get_secret_value()
+    app.state.cipher = TokenCipher(token_key) if token_key else None
     app.state.google_factory = google_factory or default_google_factory(settings, app.state.cipher)
     app.state.realtime_timeout = realtime_timeout
     # Bing は API キーで呼ぶ（利用者ごとのクライアントは要らない）。フェイクモードではダミー
@@ -93,6 +103,13 @@ def create_app(
         response = await call_next(request)
         if is_api:
             response.headers["Cache-Control"] = "no-store"
+        return response
+
+    # 後に足したものが外側になる。api_guard が断った応答（415・413）にも付ける
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     app.include_router(auth_router)

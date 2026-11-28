@@ -41,6 +41,8 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
    uv run python -m glance.sync --source bing   # Bing だけ（--site <サイト ID> で絞れる）
    ```
 
+**暗号化の鍵を入れ替えたとき**: `GLANCE_TOKEN_KEY` を「新しい鍵,古い鍵」にしてから `uv run python -m glance.rekey`。`--check` で 0件になったら古い鍵を外す（手順は technical_design.md §5）
+
 **テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`
 
 **画面の自動テスト**（ブラウザで動かす。ふだんの `uv run pytest` では飛ばす）: `cd web && npm run build` で画面を書き出してから、`GLANCE_E2E=1 uv run pytest tests/e2e`。ブラウザは `uv run playwright install chromium` で入れる（別の場所のものを使うときは `GLANCE_E2E_CHROMIUM` に実行ファイルのパス）

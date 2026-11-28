@@ -34,7 +34,7 @@ def _flow(settings: Settings, state: str | None = None, code_verifier: str | Non
     config = {
         "web": {
             "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
+            "client_secret": settings.google_client_secret.get_secret_value(),
             "auth_uri": AUTH_URI,
             "token_uri": TOKEN_URI,
         }
@@ -87,6 +87,16 @@ def exchange_code(settings: Settings, state: str, code_verifier: str, code: str)
     )
 
 
+# サーバーの時計と Google の時計のずれを、ここまで認める。既定の0秒だと、こちらの時計が1秒遅れているだけで
+# 「発行時刻より前」として断られる（2026-11-28、手元の WSL で起きた）。トークンの期限は1時間なので、安全性はほぼ変わらない
+CLOCK_SKEW_SECONDS = 10
+
+
 def verify_id_token(settings: Settings, token: str) -> dict[str, Any]:
     """ID トークンの署名・発行元・宛先・期限を確かめる（ブロッキング。Google の公開鍵を取りに行く）。"""
-    return id_token.verify_oauth2_token(token, google.auth.transport.requests.Request(), settings.google_client_id)
+    return id_token.verify_oauth2_token(
+        token,
+        google.auth.transport.requests.Request(),
+        settings.google_client_id,
+        clock_skew_in_seconds=CLOCK_SKEW_SECONDS,
+    )

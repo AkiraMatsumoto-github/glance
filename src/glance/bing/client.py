@@ -1,17 +1,14 @@
 """Bing Webmaster API の呼び出しの入口（data_sources.md §4）。
 
-認証は API キー。キーはクエリ文字列で送る仕様なので、URL をログやエラーの文に出さない。
+認証は API キー。キーはクエリ文字列で送る仕様なので、URL をログやエラーの文に出さない
+（httpx のログは glance/logs.py で抑える）。
 """
 
-import logging
 import random
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 import httpx
-
-# httpx は要求の URL（キーを含む）を INFO で書くので、出さないようにする
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 API_URL = "https://ssl.bing.com/webmaster/api.svc/json"
 

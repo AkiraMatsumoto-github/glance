@@ -18,6 +18,7 @@ from glance.bing.client import FakeBingClient, RealBingClient
 from glance.config import Settings
 from glance.db.session import create_engine, create_sessionmaker
 from glance.google.factory import default_google_factory
+from glance.logs import quiet_secret_logs
 from glance.sync.common import Outcome
 from glance.sync.runner import Syncer
 from glance.sync.sitemap import FakeSitemapFetcher, HttpSitemapFetcher
@@ -39,8 +40,10 @@ async def main(argv: list[str]) -> int:
 
     settings = Settings()  # type: ignore[call-arg]
     settings.check()  # API と同じく、起動してはいけない組み合わせ（本番でのフェイクモードなど）を止める
-    engine = create_engine(settings.database_url)
-    cipher = TokenCipher(settings.token_key) if settings.token_key else None
+    quiet_secret_logs()
+    engine = create_engine(settings.database_url.get_secret_value())
+    token_key = settings.token_key.get_secret_value()
+    cipher = TokenCipher(token_key) if token_key else None
     syncer = Syncer(
         create_sessionmaker(engine),
         default_google_factory(settings, cipher),

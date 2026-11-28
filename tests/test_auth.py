@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from glance.auth.sessions import COOKIE_NAME
+from glance.auth.cookies import SESSION
 from glance.main import create_app
 from tests.conftest import EMAIL, JSON, db_query, make_settings
 
@@ -21,7 +21,7 @@ async def test_fake_login_me_logout(client: AsyncClient) -> None:
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     cookie = response.headers["set-cookie"]
-    assert f"{COOKIE_NAME}=" in cookie
+    assert cookie.startswith(f"{SESSION}=")  # 手元（http）では __Host- を付けない
     assert "HttpOnly" in cookie
     assert "SameSite=lax" in cookie
     assert "Secure" not in cookie  # 手元（http）では Secure を付けない
@@ -91,6 +91,18 @@ async def test_static_pages(database_url: str, tmp_path: object, app: FastAPI) -
         assert missing.status_code == 404
         assert missing.text == "missing"
         assert (await c.get("/api/me")).status_code == 401
+        # 画面・API・断った応答のどれにも、フレームに埋め込ませない・種類を推測させないヘッダーを付ける
+        responses = [
+            await c.get("/"),
+            missing,
+            await c.get("/api/me"),
+            await c.post("/api/sites", content="x", headers={"content-type": "text/plain"}),
+        ]
+        assert [r.status_code for r in responses] == [200, 404, 401, 415]
+        for r in responses:
+            assert r.headers["x-frame-options"] == "DENY"
+            assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+            assert r.headers["x-content-type-options"] == "nosniff"
     await web.state.engine.dispose()
 
 

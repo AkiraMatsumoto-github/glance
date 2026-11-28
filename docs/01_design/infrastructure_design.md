@@ -67,7 +67,7 @@ Glance の DB は数GB 規模になる（[database_design.md](database_design.md
 
 ## 5. ログイン（Google アカウント）
 
-- **ログイン**: Google アカウントでログインする（OAuth）。ログインできるのは、許可したメールアドレスだけ。許可するアドレスは `/etc/glance/` の env に書き、git には書かない。
+- **ログイン**: Google アカウントでログインする（OAuth）。ログインできるのは、許可したメールアドレスだけ。許可するアドレスは `/etc/glance/` の env に書き、git には書かない。データはアカウントごとに分かれ、ほかの人のサイト・数字は見えない（2026-11-28 利用者の決定。[technical_design.md](technical_design.md) §4）。
 - **許可の範囲**: ログインのときに、GA4 と Search Console の読み取りの許可（`analytics.readonly`・`webmasters.readonly`）ももらう。Search Console を使うのは2番目の段階からだが、そのときに許可を取り直さずに済むよう、最初から両方もらう。
 - **トークン**: もらった更新トークンは暗号化して利用者（`users`）に入れ、接続設定（`connections`）からその利用者を指す。日次バッチとリアルタイムは、このトークンで API を呼ぶ。サービスアカウントは使わない。
 - **サイトへの紐づけ**

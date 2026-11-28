@@ -52,7 +52,9 @@ glance/
 ├── src/glance/
 │   ├── main.py         # FastAPI の起動。/api と画面の静的ファイルをまとめる
 │   ├── config.py       # 環境変数の読み込み（§9）
-│   ├── auth/           # Google ログイン、セッション、トークンの暗号化
+│   ├── logs.py         # 秘密の値をログに出さない（§9）
+│   ├── rekey.py        # 暗号化の鍵を入れ替えた後の暗号化し直し（python -m glance.rekey。§5）
+│   ├── auth/           # Google ログイン、セッション、クッキー（cookies.py）、トークンの暗号化
 │   ├── google/         # Google（GA4 Data API・Admin API・Search Console API）の呼び出し。client.py が入口、real.py が本物、fake.py がダミー
 │   ├── bing/           # Bing Webmaster API の呼び出し（client.py。本物とダミー）と、キーの API（routes.py）
 │   ├── realtime/       # リアルタイムの取得とサイト横断のまとめ
@@ -74,22 +76,29 @@ glance/
 **流れ**
 
 1. 画面の「Google でログイン」→ `GET /api/auth/login`。
-2. サーバーが `state` と PKCE の `code_verifier` を作り、期限10分のクッキー（`HttpOnly`・`Secure`）に入れて、Google の同意画面へ送る。
+2. サーバーが `state` と PKCE の `code_verifier` を作り、期限10分のクッキー（下の「クッキー」）に入れて、Google の同意画面へ送る。
    - 許可の範囲: `openid`・`email`・`profile`・`analytics.readonly`・`webmasters.readonly`
    - `access_type=offline`（更新トークンをもらう）
 3. Google から `GET /api/auth/callback` に戻る。`state` を照合し、認可コードをトークンに替える。
-4. ID トークンを検証する（発行元、宛先、メールアドレスが確認済みか）。
+4. ID トークンを検証する（発行元、宛先、期限、メールアドレスが確認済みか）。サーバーと Google の時計のずれは10秒まで認める（既定の0秒だと、手元の時計が1秒遅れているだけで「発行時刻より前」として断られた。2026-11-28）。
 5. メールアドレスが許可リスト（`GLANCE_ALLOWED_EMAILS`）になければ、ログイン画面に戻して「このアカウントは使えません」と出す。トークンは保存しない。
-6. 利用者（`users`）を作るか更新し、更新トークンを暗号化して入れる。
+6. 利用者（`users`）を作るか更新し、更新トークンを暗号化して入れる。初めての人には、その人だけの顧客（`tenants`）を作る。サイト・連携・Bing のキー・取り込んだ数字は顧客ごとに分かれるので、ほかのアカウントのものは見えない（2026-11-28 利用者の決定）。
 7. セッションを作り、`/` へ戻す。
 
 **更新トークンがもらえないとき**: Google は、2回目以降の同意では更新トークンを返さない。戻ってきたときに更新トークンがなく、保存済みのものもないときは、`prompt=consent` を付けてもう一度同意画面へ送る。保存済みの更新トークンが失効したとき（API が `reauth_required` を返したとき）は、ログイン画面のボタンが `prompt=consent` 付きになり、同意画面を出してもらい直す。
 
 **セッション**
 
-- ランダムな ID をクッキー（`HttpOnly`・`Secure`・`SameSite=Lax`）に入れる。DB（`sessions`）には ID のハッシュだけを入れる。
+- ランダムな ID をクッキーに入れる。DB（`sessions`）には ID のハッシュだけを入れる。
 - 期限は30日。ログアウトで消す。
 - 書き込みの要求（POST・PATCH・DELETE）は JSON だけを受ける。`SameSite=Lax` と合わせて、別のサイトからの書き込み（CSRF）を防ぐ。
+
+**クッキー**（`glance/auth/cookies.py`。2026-11-28 セキュリティレビューの対応）
+
+- どれも `HttpOnly`・`SameSite=Lax`・`Path=/`。名前は、セッションが `glance_session`、同意画面から戻るまでの照合が `glance_oauth_state`・`glance_oauth_verifier`。
+- 本番（`GLANCE_PUBLIC_URL` が https）では `Secure` にし、名前に `__Host-` を付ける（`__Host-glance_session` など）。`__Host-` のクッキーは `Secure`・`Path=/`・Domain なしでしか置けないので、同じ親ドメインのほかのサブドメインから同じ名前のクッキーを差し込まれない（セッションの押しつけ、ログインの state の書き換えを防ぐ）。手元（http://localhost）は `Secure` にできないので付けない。
+
+**応答のヘッダー**: 全部の応答（画面・API）に `X-Frame-Options: DENY`・`Content-Security-Policy: frame-ancestors 'none'`（ほかのサイトのフレームに埋め込ませない）と `X-Content-Type-Options: nosniff` を付ける（`glance/main.py`）。
 
 **Google の API を呼ぶとき**
 
@@ -99,7 +108,11 @@ glance/
 ## 5. トークンの暗号化
 
 - Fernet（`cryptography`）で暗号化して DB に入れる。鍵は `/etc/glance/glance.env` の `GLANCE_TOKEN_KEY`。作り方は `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`（出てきた値を env に直接書き、どこにも貼らない）。
-- 鍵を入れ替えるときは、新しい鍵と古い鍵を並べて読み（`MultiFernet`）、保存し直すときに新しい鍵で暗号化する。
+- 対象は、Google の更新トークン（`users.refresh_token_encrypted`）と Bing の API キー（`bing_keys.key_encrypted`）。
+- 鍵を入れ替える手順（`glance/rekey.py`。本番では人が VPS で打つ）:
+  1. 新しい鍵を作り、`GLANCE_TOKEN_KEY` を「新しい鍵,古い鍵」と並べて API を再起動する。暗号化は先頭の鍵で行い、復号は並べたどの鍵でもできる（`MultiFernet`）。
+  2. `uv run python -m glance.rekey` で、古い鍵で暗号化した値を新しい鍵で暗号化し直す。どの鍵でも復号できない値が1つでもあれば、何も書き換えずに止める（古い鍵を並べ忘れたときに値を壊さないため）。表示するのは件数と行の ID だけで、値は出さない。
+  3. `uv run python -m glance.rekey --check` で「古い鍵のまま 0件」になったら、`GLANCE_TOKEN_KEY` から古い鍵を外して再起動する。
 
 ## 6. API
 
@@ -263,7 +276,10 @@ uv run python -m glance.sync --site 1        # サイトを絞る（何度でも
 - 接続先と鍵は `.env` から読む（API と同じ）。GSC は、紐づけた利用者の更新トークンで呼ぶ。Bing は、紐づけたキーで呼ぶ。
 - **GSC**: 表（`gsc_site`・`gsc_page`・`gsc_query_page`）ごとに、取得済みの最終日の3日前から今日まで、1日ずつ取る。初めては16ヶ月前の月初から。1日分は消してから入れ直す。1回の取得は2.5万行までで、超える日は続きを取る。途中で失敗したら、その表はそこで止める（次回は取得済みの最終日から続ける。数字が1日もない期間（サイトを始める前など）は、前回までに取り終えた日から続ける）。サイトと表は並べて取るが、Search Console を同時に呼ぶのは3つまでにする（上限は利用者ごとに1分1,200回）。上限に当たったら（429、または 403 の `rateLimitExceeded` など）、15秒・30秒・60秒…と待って5回までやり直す。失敗したときは、API が返したエラーの文を取得ログに残す。
 - **GSC のクエリの整理**: 取り込みの後に、翌月8日を過ぎた月のうち、今回取った月とまだ整理していない月について、その月の表示回数が10回未満のクエリを `gsc_query_page` から消す。整理した月は取得ログ（`gsc_query_cleanup`）に残す。クエリ表の取り込みが途中で失敗した回は整理しない（月の数字がそろっていないため。次回、取り終えてから整理する）。取れる最初の月（16ヶ月前）は、Search Console に月の途中からしか残っておらず月の数字がそろわないので整理しない。
-- **サイトマップ**: GSC の表の後に、Search Console に登録したサイトマップ（`sitemaps.list`）を読み、載っている URL のパスで `sitemap_urls` を入れ替える（`glance/sync/sitemap.py`。索引はたどり、.gz も読む。上限はファイル500・URL 20万・1ファイル50MB）。サイトマップの取得は、サイトに直接 HTTP で行う。紐づけた Search Console のサイトのドメインの外（ほかのサイト・サーバーの内側の住所）は読まず、転送先も1回ずつ確かめる（2026-11-28 コードレビューの対応）。登録が無い・読めない・ドメインの中に1つも無いときは失敗として取得ログに残し、前の URL のままにする。
+- **サイトマップ**: GSC の表の後に、Search Console に登録したサイトマップ（`sitemaps.list`）を読み、載っている URL のパスで `sitemap_urls` を入れ替える（`glance/sync/sitemap.py`。索引はたどり、.gz も読む。上限はファイル500・URL 20万・1ファイル50MB）。サイトマップの取得は、サイトに直接 HTTP で行う。サーバーの内側に届かせないため、次のようにする（2026-11-28 コードレビュー・セキュリティレビューの対応）。
+  - 紐づけた Search Console のサイトのドメインの外（ほかのサイト）は読まない。ポートは既定（80・443）だけ。転送先も1回ずつ確かめる。
+  - つなぐ前に名前解決し、全部の IP が公開のもの（ループバック・プライベート・リンクローカル・予約・マルチキャストでない）ときだけ、確かめた IP にそのままつなぐ（ドメインの持ち主は名前を内側の IP に向けられるため。確かめた後に名前解決の結果を変えられても届かない）。https の証明書は元のホスト名で確かめる。環境変数のプロキシは使わない。
+  - XML は木を作らずに先頭から読み、`loc` だけを拾う（壊れた・悪意のある大きなファイルでメモリを使いすぎないため）。実体（DTD の ENTITY）の宣言があれば読まない。登録が無い・読めない・ドメインの中に1つも無いときは失敗として取得ログに残し、前の URL のままにする。
 - **Bing**: `GetRankAndTrafficStats`・`GetPageStats`・`GetCrawlStats` は日付を選べず、取れる範囲を全部返すので、毎回全部を上書きする（同じ日・週は書き換え）。
 - **値のそろえ方**（[database_design.md](database_design.md) §7）: ページは URL をパスに（そろえて同じパスになった行は足し合わせる）、国は3文字を2文字に（分からない国は `(not set)`）、デバイスは小文字、Bing の日付は `/Date(…)/` を日付に。
 - 表・ソースごとに取得ログ（`sync_runs`。取った先 `target` も）を残し、1行ずつ結果を出す。紐づけた利用者・キーを使えないとき（許可リストから外した人など）は、取らなかった表（サイトマップも）ごとに失敗を残す。1つのサイト・ソースで思わぬエラー（DB のエラーなど）が出ても、ほかは続ける。失敗があれば終了コードは 1。
@@ -301,7 +317,7 @@ uv run python -m glance.sync --site 1        # サイトを絞る（何度でも
 
 | 名前 | 中身 |
 |---|---|
-| `GLANCE_DATABASE_URL` | DB の接続 URI |
+| `GLANCE_DATABASE_URL` | DB の接続 URI（パスワードが入る） |
 | `GLANCE_TOKEN_KEY` | 更新トークンを暗号化する鍵（Fernet） |
 | `GLANCE_GOOGLE_CLIENT_ID` | OAuth クライアントの ID |
 | `GLANCE_GOOGLE_CLIENT_SECRET` | OAuth クライアントの秘密 |
@@ -309,6 +325,12 @@ uv run python -m glance.sync --site 1        # サイトを絞る（何度でも
 | `GLANCE_PUBLIC_URL` | 画面の URL。Google から戻る先（`/api/auth/callback`）を組み立てるのに使う |
 
 Cloudflare Tunnel の認証情報は、cloudflared の設定ファイルとして別に置く（[infrastructure_design.md](infrastructure_design.md) §4）。
+
+**秘密の値をログに出さない**（2026-11-28 セキュリティレビューの対応）
+
+- 設定のうち `GLANCE_DATABASE_URL`・`GLANCE_TOKEN_KEY`・`GLANCE_GOOGLE_CLIENT_SECRET` は `SecretStr` で持ち、設定を表示しても値が出ないようにする（使うところでだけ取り出す）。
+- API とコマンドの起動のときに、秘密を書き得るライブラリのログを WARNING 以上だけにする（`glance/logs.py`）。httpx（Bing のキーが URL に入る）、requests_oauthlib・oauthlib（DEBUG でクライアントの秘密・認可コード・更新トークンを書く）、google（Google の SDK は DEBUG で要求のヘッダーのアクセストークンを書く）。uvicorn のアクセスログは、ログインの戻り（`/api/auth/callback`）の URL の認可コードと state を伏せる。
+- 運用の決まり: 本番でログの段階を DEBUG にしない。Google の SDK のログを開く環境変数（`GOOGLE_SDK_PYTHON_LOGGING_SCOPE`）を本番で設定しない。
 
 ## 10. 反映の手順
 

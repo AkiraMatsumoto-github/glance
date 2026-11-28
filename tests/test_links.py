@@ -8,7 +8,7 @@ from glance.bing.client import BingKeyInvalid, BingUnavailable, FakeBingClient, 
 from glance.google.fake import FakeGoogleClient
 from glance.google.client import GoogleQuotaExceeded, GoogleUnavailable, GscApiDisabled
 from glance.sites.gsc import match_gsc_site
-from tests.conftest import add_site, db_query
+from tests.conftest import add_site, db_query, other_tenant
 
 SITES_A = ["https://a.example/", "https://b.example/"]
 SITES_B = ["https://c.example/"]
@@ -147,8 +147,8 @@ async def test_bing_keys_and_link(logged_in: AsyncClient, database_url: str) -> 
 async def test_other_tenant_cannot_use_links(logged_in: AsyncClient, database_url: str) -> None:
     site = await add_site(logged_in, "900000001")
     key = (await logged_in.post("/api/bing/keys", json={"name": "k", "key": "good-key-1234"})).json()
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    db_query(database_url, "UPDATE users SET tenant_id = 2")
+    other = other_tenant(database_url)
+    db_query(database_url, "UPDATE users SET tenant_id = %s", (other,))
     assert (await logged_in.get("/api/bing/keys")).json() == []
     assert (await logged_in.get(f"/api/bing/keys/{key['id']}/sites")).status_code == 404
     assert (await logged_in.put(f"/api/bing/keys/{key['id']}", json={"key": "good-key-5678"})).status_code == 404
@@ -231,9 +231,9 @@ async def test_gsc_trouble_still_lets_sites_be_added(logged_in: AsyncClient, sta
 async def test_other_tenant_key_cannot_be_used_on_own_site(logged_in: AsyncClient, database_url: str) -> None:
     # 自分のサイトに、別の顧客のキーの ID を本文で渡しても使えない（あるかどうかもわからない）
     site = await add_site(logged_in, "900000001")
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
+    other = other_tenant(database_url)
     [(other_key,)] = db_query(
-        database_url, "INSERT INTO bing_keys (tenant_id, name, key_encrypted, last4) VALUES (2, 'x', 'x', 'xxxx') RETURNING id"
+        database_url, "INSERT INTO bing_keys (tenant_id, name, key_encrypted, last4) VALUES (%s, 'x', 'x', 'xxxx') RETURNING id", (other,)
     )
     response = await logged_in.put(
         f"/api/sites/{site['id']}/bing", json={"key_id": other_key, "site_url": "https://www.logishift.example/"}
@@ -244,8 +244,8 @@ async def test_other_tenant_key_cannot_be_used_on_own_site(logged_in: AsyncClien
 
 async def test_other_tenant_site_cannot_be_linked(logged_in: AsyncClient, database_url: str) -> None:
     site = await add_site(logged_in, "900000001")
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    db_query(database_url, "UPDATE sites SET tenant_id = 2")
+    other = other_tenant(database_url)
+    db_query(database_url, "UPDATE sites SET tenant_id = %s", (other,))
     response = await logged_in.put(f"/api/sites/{site['id']}/gsc", json={"site_url": "sc-domain:logishift.example"})
     assert response.status_code == 404
     assert db_query(database_url, "SELECT count(*) FROM connections WHERE source = 'gsc'") == [(0,)]

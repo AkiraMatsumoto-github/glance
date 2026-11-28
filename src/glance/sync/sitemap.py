@@ -2,16 +2,24 @@
 
 Search Console に登録したサイトマップ（sitemaps.list）から始め、サイトマップの索引（sitemapindex）は中のサイトマップを
 たどる。.gz にも対応する。読みすぎないよう、ファイル数・URL 数・1ファイルの大きさに上限を置く。
-紐づけたサイトのドメインの外（ほかのサイトや、サーバーの内側の住所）は読まない。転送先も1回ずつ確かめる。
+
+サーバーの内側に届かせない（technical_design.md §6.5。2026-11-28 セキュリティレビューの対応）:
+- 紐づけたサイトのドメインの外は読まない。ポートは既定（80・443）だけ。転送先も1回ずつ確かめる。
+- つなぐ前に名前解決し、公開の IP だけにつなぐ（ドメインの持ち主は、名前を内側の IP に向けられるため）。
+XML は木を作らずに先頭から読み、loc だけを拾う（壊れた・悪意のある大きなファイルで、メモリを使いすぎないため）。
 """
 
 import gzip
 import io
+import ipaddress
+import socket
 from collections.abc import Callable, Iterable
 from typing import Protocol
 from urllib.parse import urljoin, urlsplit
-from xml.etree import ElementTree
+from xml.parsers import expat
 
+import anyio
+import httpcore
 import httpx
 
 from glance.sync.values import page_path
@@ -30,10 +38,19 @@ def site_domain(site_url: str) -> str:
 
 
 def within(url: str, domain: str) -> bool:
-    """http(s) で、ホストがそのドメインか、そのサブドメインか。"""
+    """http(s) で、ポートが既定（80・443）で、ホストがそのドメインか、そのサブドメインか。"""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
-    return parts.scheme in ("http", "https") and bool(domain) and (host == domain or host.endswith("." + domain))
+    try:
+        port = parts.port
+    except ValueError:  # 数字でないポート
+        return False
+    return (
+        parts.scheme in ("http", "https")
+        and port in (None, 80, 443)
+        and bool(domain)
+        and (host == domain or host.endswith("." + domain))
+    )
 
 
 class SitemapFetcher(Protocol):
@@ -42,13 +59,86 @@ class SitemapFetcher(Protocol):
         ...
 
 
+def is_public(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """インターネットの公開の住所か（ループバック・プライベート・リンクローカル・予約・マルチキャストは違う）。"""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_global and not address.is_multicast
+
+
+class PublicOnlyBackend(httpcore.AsyncNetworkBackend):
+    """つなぐ前に名前解決し、全部の IP が公開のものなら、そのうちの1つにつなぐ。
+
+    確かめた IP にそのままつなぐので、確かめた後に名前解決の結果を変えられても（DNS rebinding）内側に届かない。
+    https の証明書は、元のホスト名で確かめる（httpcore が server_hostname に元のホスト名を渡す）。
+    """
+
+    def __init__(self) -> None:
+        self._backend = httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        try:
+            with anyio.fail_after(timeout):
+                infos = await anyio.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except (OSError, TimeoutError) as e:
+            raise httpcore.ConnectError(f"名前解決できません: {host}") from e
+        addresses = sorted({ipaddress.ip_address(info[4][0]) for info in infos}, key=lambda a: (a.version, str(a)))
+        if not addresses or not all(is_public(a) for a in addresses):
+            raise httpcore.ConnectError(f"公開されていない住所にはつなぎません: {host}")
+        # IPv4 から順に試す（IPv6 でつなげない環境で、時間切れまで待たないため）
+        error: Exception | None = None
+        for address in addresses:
+            try:
+                return await self._backend.connect_tcp(
+                    str(address), port, timeout=timeout, local_address=local_address, socket_options=socket_options
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as e:
+                error = e
+        assert error is not None
+        raise error
+
+    async def connect_unix_socket(
+        self, path: str, timeout: float | None = None, socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None
+    ) -> httpcore.AsyncNetworkStream:
+        raise httpcore.ConnectError("サイトマップの取得では使わない")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class PublicOnlyTransport(httpx.AsyncHTTPTransport):
+    """公開の IP にだけつなぐ transport。
+
+    httpx は、つなぎ方（network_backend）を外から渡す口を持たないので、中の接続の束（_pool）を作り直す。
+    httpx を上げて中の作りが変わると効かなくなるので、テスト（内側の住所を断ること）で確かめる。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(trust_env=False)
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=httpx.create_ssl_context(trust_env=False), network_backend=PublicOnlyBackend()
+        )
+
+
 class HttpSitemapFetcher:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        # テストでは、決まった応答を返す transport に差し替える
         self._transport = transport
 
     async def fetch(self, url: str, allowed: Callable[[str], bool]) -> bytes:
         async with httpx.AsyncClient(
-            timeout=30, follow_redirects=False, transport=self._transport, headers={"User-Agent": USER_AGENT}
+            timeout=30,
+            follow_redirects=False,
+            transport=self._transport or PublicOnlyTransport(),
+            trust_env=False,  # 環境変数のプロキシを使わない（公開の IP だけにつなぐ確認を通らなくなるため）
+            headers={"User-Agent": USER_AGENT},
         ) as http:
             for _ in range(MAX_REDIRECTS + 1):
                 async with http.stream("GET", url) as response:
@@ -67,8 +157,51 @@ class HttpSitemapFetcher:
         raise ValueError(f"転送が多すぎます: {url}")
 
 
-def _name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]  # 名前空間（{http://www.sitemaps.org/...}）を外す
+def _local(name: str) -> str:
+    return name.rsplit(" ", 1)[-1]  # 名前空間（http://www.sitemaps.org/... ）を外す
+
+
+def parse_sitemap(body: bytes) -> tuple[str, list[str]]:
+    """サイトマップの XML から、一番外の要素の名前（urlset か sitemapindex）と、loc の中身を取る。
+
+    木を作らずに先頭から読み、loc だけを持つ。loc が URL 数の上限を超えたら、そこで止める。
+    サイトマップは実体（DTD の ENTITY）を使わないので、宣言があれば読まない（実体の展開でメモリを使わせる XML を断つ）。
+    """
+    parser = expat.ParserCreate(namespace_separator=" ")
+    root: list[str] = []
+    locs: list[str] = []
+    text: list[str] | None = None  # いま読んでいる loc の中身
+
+    def start(name: str, _attrs: object) -> None:
+        nonlocal text
+        if not root:
+            root.append(_local(name))
+        if _local(name) == "loc":
+            text = []
+
+    def end(name: str) -> None:
+        nonlocal text
+        if _local(name) == "loc" and text is not None:
+            value = "".join(text).strip()
+            text = None
+            if value:
+                locs.append(value)
+                if len(locs) > MAX_URLS:
+                    raise ValueError(f"サイトマップの URL が {MAX_URLS} を超えました")
+
+    def chars(data: str) -> None:
+        if text is not None:
+            text.append(data)
+
+    def entity(*_args: object) -> None:
+        raise ValueError("サイトマップに実体の宣言があるので読みません")
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = chars
+    parser.EntityDeclHandler = entity
+    parser.Parse(body, True)
+    return (root[0] if root else ""), locs
 
 
 async def sitemap_paths(fetcher: SitemapFetcher, sitemaps: Iterable[str], site_url: str) -> set[str]:
@@ -95,11 +228,10 @@ async def sitemap_paths(fetcher: SitemapFetcher, sitemaps: Iterable[str], site_u
             body = gzip.GzipFile(fileobj=io.BytesIO(body)).read(MAX_BYTES + 1)
             if len(body) > MAX_BYTES:
                 raise ValueError(f"サイトマップが大きすぎます: {url}")
-        root = ElementTree.fromstring(body)
-        locs = [el.text.strip() for el in root.iter() if _name(el.tag) == "loc" and el.text]
-        if _name(root.tag) == "sitemapindex":
+        root, locs = parse_sitemap(body)
+        if root == "sitemapindex":
             queue.extend(locs)  # 中のサイトマップ
-        elif _name(root.tag) == "urlset":
+        elif root == "urlset":
             paths.update(page_path(loc) for loc in locs)
         if len(paths) > MAX_URLS:
             raise ValueError(f"サイトマップの URL が {MAX_URLS} を超えました")

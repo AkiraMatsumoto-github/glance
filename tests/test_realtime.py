@@ -5,7 +5,7 @@ from httpx import AsyncClient
 
 from glance.google.fake import ERROR_PROPERTY_ID, FakeGoogleClient
 from glance.google.client import GooglePermissionDenied, GoogleQuotaExceeded, MinuteRow, ReauthRequired
-from tests.conftest import add_site, db_query
+from tests.conftest import add_site, db_query, other_tenant
 
 
 async def test_requires_login(client: AsyncClient) -> None:
@@ -139,6 +139,6 @@ async def test_demo_needs_no_login_and_touches_no_data(client: AsyncClient, data
 
 async def test_other_tenant_sites_are_not_fetched(logged_in: AsyncClient, database_url: str) -> None:
     await add_site(logged_in, "900000001")
-    db_query(database_url, "INSERT INTO tenants (id, name) VALUES (2, '別の顧客')")
-    db_query(database_url, "UPDATE sites SET tenant_id = 2")
+    other = other_tenant(database_url)
+    db_query(database_url, "UPDATE sites SET tenant_id = %s", (other,))
     assert (await logged_in.get("/api/realtime")).json()["sites"] == []

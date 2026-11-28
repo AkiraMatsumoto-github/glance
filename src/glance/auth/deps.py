@@ -5,7 +5,8 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from glance.auth.sessions import COOKIE_NAME, end_sessions, find_user
+from glance.auth.cookies import SESSION, read_cookie
+from glance.auth.sessions import end_sessions, find_user
 from glance.db.models import User
 from glance.db.session import get_db
 from glance.errors import AppError
@@ -14,7 +15,7 @@ Db = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def current_user(request: Request, db: Db) -> User:
-    raw = request.cookies.get(COOKIE_NAME)
+    raw = read_cookie(request, SESSION)
     user = await find_user(db, raw) if raw else None
     if user is None:
         raise AppError(401, "unauthenticated", "ログインしてください")
