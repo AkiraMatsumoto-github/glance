@@ -1,0 +1,21 @@
+# Search Console・Bing の取り込み（python -m glance.sync。technical_design.md §6.5）。glance-sync.timer が毎日動かす。
+# VPS の /etc/systemd/system/ に置く（開設手順 deploy/vps_setup.md §5）。
+# 結果は journalctl -u glance-sync で見る（1行ずつ、表・期間・行数・成否が出る。失敗があれば終了コードが 1 になり、
+# systemctl status glance-sync が failed になる）
+[Unit]
+Description=Glance sync (Search Console and Bing)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=glance
+Group=glance
+WorkingDirectory=/srv/glance/current
+EnvironmentFile=/etc/glance/glance.env
+ExecStart=/srv/glance/current/.venv/bin/python -m glance.sync
+# 初めて取るサイトは16ヶ月分を1日ずつ取るので、時間がかかる
+TimeoutStartSec=6h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

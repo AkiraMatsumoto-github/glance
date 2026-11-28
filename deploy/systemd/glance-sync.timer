@@ -1,0 +1,14 @@
+# 取り込み（glance-sync.service）を毎日動かす（2026-11-28 決定。roadmap.md §4）。
+# 毎回「取得済みの最終日の3日前」から取り直すので、1日抜けても次の回で埋まる。
+# VPS の /etc/systemd/system/ に置き、sudo systemctl enable --now glance-sync.timer で始める（開設手順 deploy/vps_setup.md §9）
+[Unit]
+Description=Run Glance sync every day
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Tokyo
+RandomizedDelaySec=15m
+# VPS が止まっていて動かせなかった回は、起動した後に動かす
+Persistent=true
+
+[Install]
+WantedBy=timers.target

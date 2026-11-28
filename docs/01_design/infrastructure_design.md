@@ -22,8 +22,8 @@
 │  XServer VPS（LeadHub と同じサーバー）           │
 │   cloudflared（Glance 用）                     │
 │   FastAPI（127.0.0.1:8101）                    │  ← API と、画面（Next.js で書き出した静的ファイル）。DB に繋ぐのはここだけ
-│   PostgreSQL（LeadHub の Docker のコンテナに、    │
-│              別のデータベースとして入れる）        │
+│   PostgreSQL（Glance 用のコンテナ。LeadHub の   │
+│              DB のコンテナとは別。Docker は共有）  │
 │   日次バッチ（2番目の段階から）                   │
 └──┬──────────────────────────────────────────┘
    │ 外向きの呼び出し
@@ -52,8 +52,8 @@ Glance の DB は数GB 規模になる（[database_design.md](database_design.md
 
 | 項目 | 見込み |
 |---|---|
-| メモリ | VPS は 4GB ＋ スワップ 2GB。LeadHub が普段 0.7GB 前後、同じ VPS の GitHub Actions のランナーが上限 2.5GB（LeadHub のインフラ設計書・VPS への移行計画）。Glance で常駐するのは API だけで、約0.15GB 増える見込み（LeadHub の API の実測 117MB に、Google のライブラリの分を足した）。合計は約3.4GB |
-| メモリを抑える工夫 | 画面は静的ファイルにし、Node.js を常駐させない。画面のビルドは手元で行う（VPS でビルドしない）。DB は LeadHub の PostgreSQL のコンテナに別のデータベースとして入れ、コンテナを増やさない |
+| メモリ | VPS は 4GB ＋ スワップ 2GB。LeadHub が普段 0.7GB 前後、同じ VPS の GitHub Actions のランナーが上限 2.5GB（LeadHub のインフラ設計書・VPS への移行計画）。Glance で常駐するのは API（約0.15GB。LeadHub の API の実測 117MB に、Google のライブラリの分を足した）と DB のコンテナ（約0.2GB の見込み）で、合計は約3.6GB |
+| メモリを抑える工夫 | 画面は静的ファイルにし、Node.js を常駐させない。画面のビルドは手元で行う（VPS でビルドしない）。DB はもともと LeadHub の PostgreSQL のコンテナに入れてコンテナを増やさない案だったが、LeadHub と DB の上で分けるため、Glance 用のコンテナを別に立てる（2026-11-28 利用者の決定。§6） |
 | 足りなくなったら | 8GB のプラン（月3,784円）に上げる |
 | ディスク | 50GB のうち LeadHub が使うのは 10GB 前後。Glance の DB は GSC を中心に数GB 規模 |
 
@@ -64,6 +64,9 @@ Glance の DB は数GB 規模になる（[database_design.md](database_design.md
 - `crosia.jp` を Cloudflare に追加する。アカウントは LeadHub とは分ける。
 - ネームサーバーを Cloudflare に切り替えると、crosia.jp のドメイン全体の DNS が Cloudflare に移る。切り替える前に、今使っている DNS レコード（メールの MX など）が Cloudflare 側にそろっているか確かめる。
 - Glance 用の Tunnel を作り、`glance.crosia.jp` を VPS の Glance の画面へ向ける。Tunnel は Cloudflare のアカウントごとに作るので、LeadHub の Tunnel とは別に、VPS で cloudflared をもう1つ動かす。
+- 入口は絞らない（Cloudflare Access などは使わない。2026-11-28 利用者の決定）。誰でもログイン画面とデモを開ける。中に入れるのは許可リストの人だけ（§5）。分かっている影響は次の2つで、承知のうえで絞らない。
+  - 知らない人が Google の同意画面を進めると、Glance が断っても、審査前のアプリの「利用者100人」の枠を使う可能性が高い。
+  - デモ（ダミーの数字）は誰でも何度でも呼べる。長い期間でサーバーを止める穴は塞いである（[technical_design.md](technical_design.md) §6.3 の期間の上限）。
 
 ## 5. ログイン（Google アカウント）
 
@@ -90,22 +93,22 @@ Glance の DB は数GB 規模になる（[database_design.md](database_design.md
 **守り方**
 
 - Glance は、LeadHub と別の Linux ユーザーで動かす。
-- DB は別のデータベース・別の DB ユーザーにし、互いの DB に入れないようにする。
+- DB は Glance 用の PostgreSQL のコンテナを別に立てる（2026-11-28 利用者の決定）。LeadHub の API は、LeadHub の DB のコンテナの管理者の DB ユーザーでつなぐので、同じ DB のサーバーに入れると、LeadHub が乗っ取られたときに Glance のデータも読み書きされる。コンテナを分ければ、DB の上では届かない。止める・版を上げるのも別々にできる。Docker そのものは共有する（Docker を操作できるのは root だけで、分けても守りは強くならない）。
 - 次のものは `/etc/glance/glance.env`（root・600）に置き、git には書かない。手元の保管はパスワード管理。一覧は [technical_design.md](technical_design.md) §9。
   - トークンを暗号化する鍵
   - OAuth クライアントの秘密
   - 許可するメールアドレス
 - Google の更新トークンと Bing の API キーは、暗号化して DB に入れる。暗号化の鍵は DB と別の場所（上の env）に置く（[overview.md](overview.md) §5）。
 
-自分だけで使う間はこれで足りる。外販で顧客のトークンを預かる前に、サーバーを分けるかを決め直す（[overview.md](overview.md) §6.2）。
+自分だけで使う間はこれで足りる。LeadHub のサーバーの root まで取られる場合は、コンテナを分けていても届く。外販で顧客のトークンを預かる前に、サーバーを分けるかを決め直す（[overview.md](overview.md) §6.2）。
 
 ## 7. バックアップ
 
-- **1番目の段階（リアルタイム画面）**: 分析データを貯めないので、DB にはサイトと接続設定しかない。消えても、設定し直してログインし直せば戻る。
-- **2番目の段階（Bing・GSC のバッチ）から**: DB が、取り直せないデータの唯一の置き場所になる。取り直せないのは、Bing の日次・ページ別のデータと、16ヶ月を過ぎた GSC のデータ。ここから、1日1回 Glance のデータベースを `pg_dump` して VPS の外に置く。
-- LeadHub の本番 DB は手元から送った写しで、バックアップに頼っていない。同じコンテナに入れても、Glance のバックアップは Glance のデータベースだけを対象に、LeadHub とは別に取る。
+**取らない（2026-11-28 利用者の決定）。**
+
+- DB が消えたときに取り直せないのは、Bing の日次・ページ別のデータ（API が返すのは日次が約98日・ページ別が13週）と、16ヶ月を過ぎた GSC のデータ。それ以外（サイト・連携の設定、直近の数字）は、設定し直して取り込み直せば戻る。
+- 失うのはこの古い分だけと承知のうえで、バックアップの仕組みは作らない。
 
 ## 8. 未決事項
 
-- バックアップの置き場所（2番目の段階までに決める）
-- 日次バッチの動かし方（2番目の段階の前に [technical_design.md](technical_design.md) に足す）
+- なし（バックアップは取らないことにした（§7）。日次バッチは systemd のタイマーで動かす（[technical_design.md](technical_design.md) §8））

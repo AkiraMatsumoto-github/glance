@@ -307,9 +307,13 @@ uv run python -m glance.sync --site 1        # サイトを絞る（何度でも
 |---|---|
 | Linux ユーザー | `glance`（ログインできないシステムユーザー）。置き場所は `/srv/glance`（750） |
 | リリース | `/srv/glance/releases/<日時>-<コミット>/`。動いているリリースは `/srv/glance/current`（リンク） |
-| サービス | systemd で `glance-api`（uvicorn。127.0.0.1:8101）と `glance-cloudflared`（Glance 用の Tunnel） |
-| 環境変数 | `/etc/glance/glance.env`（root・600）。systemd が読んで渡す |
-| DB | LeadHub の PostgreSQL のコンテナに、データベース `glance` と DB ユーザー `glance` を作る（コンテナの管理ユーザーで1回だけ）。`glance` は自分のデータベースにだけ入れる |
+| サービス | systemd で `glance-api`（uvicorn。127.0.0.1:8101。画面の静的ファイルも出す）と `glance-cloudflared`（Glance 用の Tunnel。LeadHub の `cloudflared` とは別に動かす） |
+| 毎日の取り込み | systemd のタイマー `glance-sync.timer` が、毎日 6:00（日本時間）ごろに `glance-sync`（`python -m glance.sync`）を動かす（2026-11-28 決定）。結果は `journalctl -u glance-sync` |
+| 環境変数 | `/etc/glance/glance.env`（root・600）と、Tunnel のトークンの `/etc/glance/cloudflared.env`（root・600）。systemd が読んで渡す |
+| DB | Glance 用の PostgreSQL 16 のコンテナ `glance-db`（`deploy/compose.yml`。127.0.0.1:5434）。LeadHub の DB のコンテナとは別にする（2026-11-28 利用者の決定。[infrastructure_design.md](infrastructure_design.md) §6）。パスワードは `/etc/glance/db.env`（root・600） |
+| VPS に入れるソフト | LeadHub で入れた Docker・uv・cloudflared だけ。Node.js は使わない（画面は手元でビルドする）。Python 3.14 は最初のデプロイで uv が入れる |
+
+ファイルは `deploy/`（systemd の設定・環境変数のひな形・`release.sh`）。開設の手順は [deploy/vps_setup.md](../../deploy/vps_setup.md)。
 
 ## 9. 環境変数
 
@@ -338,8 +342,10 @@ LeadHub と同じく、**手元で人がスクリプト（`scripts/deploy_prod.s
 
 1. **手元**: 出すコミットを一時ディレクトリに書き出し、そこで画面をビルドする（`npm ci`・`npm run build`）。コミットしていない変更が混ざらないようにするため。
 2. **手元**: コードと書き出した画面を1つのアーカイブにして VPS へ送る。
-3. **VPS**: リリースのディレクトリに展開する。uv で Python の環境を作り、`alembic upgrade head` を当てる。`current` を付け替えて `glance-api` を再起動する。
-4. **戻し方**: `current` を前のリリースに付け替えて、再起動する。マイグレーションは自動では戻さない。
+3. **VPS**（`deploy/release.sh`。root で動く）: リリースのディレクトリに展開する。uv で Python の環境を作り（`uv.lock` のとおり。テスト用のパッケージは入れない）、`alembic upgrade head` を当てる。`current` を付け替えて `glance-api` を再起動し、`/login` が 200・`/api/me` が 401 を返すまで待つ。答えなければ前のリリースに戻す。古いリリースは新しい順に3つ残す。
+4. **戻し方**: `current` を前のリリースに付け替えて、再起動する。マイグレーションは自動では戻さない（[deploy/vps_setup.md](../../deploy/vps_setup.md) §12）。
+
+SSH の接続名は手元の `.env` の `GLANCE_PROD_SSH` から読み、git に入るファイルには書かない。
 
 HTML は Cloudflare の既定ではキャッシュされず、JS・CSS はファイル名に中身のハッシュが入る。そのため、反映の後に Cloudflare のキャッシュを消す手順は要らない。
 

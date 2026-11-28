@@ -1,0 +1,21 @@
+# Glance 用の Cloudflare Tunnel（glance.crosia.jp → 127.0.0.1:8101。infrastructure_design.md §4）。
+# VPS の /etc/systemd/system/ に置く（開設手順 deploy/vps_setup.md §7）。
+# ⚠️ LeadHub の Tunnel（cloudflared.service）とは Cloudflare のアカウントが別なので、cloudflared をもう1つ動かす。
+#    `cloudflared service install` は使わない（LeadHub の cloudflared.service を書き換えてしまう）
+# Tunnel のトークンは /etc/glance/cloudflared.env（root・600）の TUNNEL_TOKEN から読む
+[Unit]
+Description=Cloudflare Tunnel for Glance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/glance/cloudflared.env
+# 版を上げるのは apt で行う（自分では上げない）
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+# 専用の一時ユーザーで動かす（Glance の API の glance ユーザーからは、トークンを読めない）
+DynamicUser=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

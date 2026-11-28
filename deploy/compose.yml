@@ -1,0 +1,33 @@
+# 本番（VPS）の Glance の PostgreSQL。LeadHub の PostgreSQL（leadhub-db）とは別のコンテナにする（2026-11-28 利用者の決定。
+# infrastructure_design.md §6）。Docker は LeadHub と共有する。手元の docker-compose.yml と同じイメージ。
+# VPS の /srv/glance/db/compose.yml に置き、`sudo docker compose -f /srv/glance/db/compose.yml up -d` で動かす
+# （開設手順 deploy/vps_setup.md §2）。リリースごとには入れ替えない
+#
+# ⚠️ 下の name: glance を消さない。LeadHub の compose（/srv/leadhub/db/compose.yml）は名前を書いておらず、
+#    置き場所のフォルダ名から「db」という名前になっている。Glance も同じ「db」になると、同じサービス名（db）の
+#    LeadHub のコンテナを、このファイルの設定で作り直してしまう
+name: glance
+
+services:
+  db:
+    image: postgres:16
+    container_name: glance-db
+    restart: unless-stopped
+    env_file: /etc/glance/db.env   # POSTGRES_PASSWORD。root だけが読める（600）
+    environment:
+      POSTGRES_DB: glance
+      POSTGRES_USER: glance
+    ports:
+      # ⚠️ 127.0.0.1 を外さない。Docker で公開したポートは ufw を通らない。
+      # LeadHub の DB（5432）と重ならず、手元の Glance の DB と同じ番号にする
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glance -d glance"]
+      interval: 10s
+      retries: 5
+
+volumes:
+  db_data:
+    name: glance_db_data

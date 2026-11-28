@@ -1,0 +1,24 @@
+# Glance の API（FastAPI）。画面（Next.js で書き出した静的ファイル）も同じプロセスが出す（technical_design.md §1）。
+# VPS の /etc/systemd/system/ に置く（開設手順 deploy/vps_setup.md §5）。
+# 127.0.0.1 だけで受け、外には Cloudflare Tunnel（glance-cloudflared）を通してだけ出す。
+# deploy/release.sh が current を新しいリリースに向けてから再起動する
+[Unit]
+Description=Glance API (FastAPI)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=glance
+Group=glance
+# 画面の置き場所（web/out）は、ここからの相対で探す
+WorkingDirectory=/srv/glance/current
+EnvironmentFile=/etc/glance/glance.env
+ExecStart=/srv/glance/current/.venv/bin/uvicorn glance.main:create_app --factory --host 127.0.0.1 --port 8101
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

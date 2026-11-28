@@ -11,7 +11,7 @@ target_metadata = Base.metadata
 
 
 def database_url() -> str:
-    return config.get_main_option("sqlalchemy.url") or Settings().database_url  # type: ignore[call-arg]
+    return config.get_main_option("sqlalchemy.url") or Settings().database_url.get_secret_value()  # type: ignore[call-arg]
 
 
 def run_migrations_offline() -> None:

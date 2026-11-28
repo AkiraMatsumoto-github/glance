@@ -43,11 +43,42 @@ GA4・Search Console・Bing のデータを日次で取り込み、管理コン�
 
 **暗号化の鍵を入れ替えたとき**: `GLANCE_TOKEN_KEY` を「新しい鍵,古い鍵」にしてから `uv run python -m glance.rekey`。`--check` で 0件になったら古い鍵を外す（手順は technical_design.md §5）
 
-**テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`
+**テスト**: `uv run pytest`（手元の DB コンテナに `glance_test` を作って使う）、`cd web && npm run lint`。いつ何を流すかは下の「テストの決まり」
 
 **画面の自動テスト**（ブラウザで動かす。ふだんの `uv run pytest` では飛ばす）: `cd web && npm run build` で画面を書き出してから、`GLANCE_E2E=1 uv run pytest tests/e2e`。ブラウザは `uv run playwright install chromium` で入れる（別の場所のものを使うときは `GLANCE_E2E_CHROMIUM` に実行ファイルのパス）
 
 **本番と同じ形で見る**: `cd web && npm run build` で `web/out` に書き出すと、API（8101）が画面も出す。http://127.0.0.1:8101 を開く。
+
+**本番（VPS）に出す**: 最初の1回は [deploy/vps_setup.md](deploy/vps_setup.md) の手順。その後は、main に push してから `scripts/deploy_prod.sh`（手元の `.env` に `GLANCE_PROD_SSH` を書いておく）
+
+## テストの決まり
+
+CI は使わず、直した人（Claude も含む）が手で流す。
+
+**直し終えたら流すもの**（変えたものに当てはまる行を全部）
+
+| 変えたもの | 流すもの |
+|---|---|
+| 設計書・README・コメントだけ | なし |
+| Python（`src/`・`tests/`・`migrations/`） | `uv run pytest` と `uvx pyflakes src tests`。pytest は全部で十数秒なので、ファイルを絞らない |
+| 画面（`web/`） | `cd web && npm run lint && npx tsc --noEmit && npm run build` |
+| 画面の動き（画面の移動・ボタン・API の呼び方）、API の応答の形、ログイン | 上に加えて、画面の自動テスト（`npm run build` の後に `GLANCE_E2E=1 uv run pytest tests/e2e`） |
+
+- 迷ったら `scripts/check.sh` で全部流す（1分ほど）。
+- 直している途中は、関係するファイルだけ流してよい。
+
+**結果の扱い**
+
+- 報告には、流したものと結果（通った・飛ばした・失敗した件数）を書く。流さなかったものがあれば、そう書く。
+- 失敗したら直してから報告する。直せなければ、失敗したまま、その出力を付けて報告する。
+
+**テストを足すとき**
+
+- 不具合を直したら、その不具合が起きる形のテストを足す（同じ不具合を2度出さないため）。
+- API・取り込みを足したら、決めた動きに加えて「ログインが要る」「ほかの顧客のものに触れない」を確かめる。デモの API は「DB・Google・Bing に触れない」を確かめる。
+- テストでは本物の Google・Bing につながない（ダミーか差し替え。`tests/conftest.py` の `google`・`bing`）。
+
+**注意**: pytest は `.env` の DB サーバーに `glance_test` を作り直す。`.env` の DB を本番に向けたまま流さない。
 
 ## 設計書
 

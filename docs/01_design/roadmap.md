@@ -26,7 +26,7 @@
 | 段階 | 中身 | 状態 |
 |---|---|---|
 | 1 | リアルタイム画面（5サイト）と、その土台（ログイン・サイト設定） | 済（手元） |
-| 2 | Bing・GSC のバッチと過去分の取り込み、DB のバックアップ | 未 |
+| 2 | Bing・GSC のバッチと過去分の取り込み | 未 |
 | 3 | GA4 のバッチ（日次の9表と1時間単位の表）と過去分の取り込み | 未 |
 | 4 | 問い合わせ指定から SQL への変換、変化の検出、評価用の質問セット | 未 |
 | 5 | 管理コンソールの残り（全体サマリー・チャット・結果カード・ダッシュボード・サイト設定の残り・「AI に聞く」） | 未 |
@@ -52,7 +52,7 @@
   - VPS に出すまでは手元でコマンドを打って動かす。毎日でなくても、間があいた分はまとめて取るので抜けは埋まる。Bing は日次が約8ヶ月・ページ別が約34週しかさかのぼれない（2026-11-27 に取った範囲）ので、少なくとも数週間に1回は動かす
 - [x] 過去分の取り込み（GSC は16ヶ月前まで、Bing は API が返す範囲。初めて取るときに自動で取る。2026-11-27 に手元で取った）
 - [x] GSC のクエリの整理（翌月8日以降に、その月の表示回数が10回未満のクエリを消す。取り込みの後に行う）
-- [ ] DB のバックアップ（`pg_dump` を DB の置き場所の外へ。VPS に出すまでは手元の DB が対象）。**ここから DB が、取り直せないデータの唯一の置き場所になる**
+- DB のバックアップは取らない（2026-11-28 利用者の決定。[infrastructure_design.md](infrastructure_design.md) §7）。DB が消えると、Bing の過去分と16ヶ月より前の GSC は戻らない
 - [x] インデックスの目安（サイトマップの URL と並べる。Google は検索に出たページ、Bing はインデックス数。2026-11-28。[screen_design.md](screen_design.md) §7）
 - [x] SEO の画面（`/seo`。2026-11-27。Google と Bing を切り替える。合計とサイトのカード、日ごとの推移、クエリ、ページ、Bing のクロールとインデックス）。見た目と部品は、デモ（`/demo/seo`）で先に作った（2026-11-26）。本物は `GET /api/seo` を同じ応答の形で作り（[technical_design.md](technical_design.md) §6.3）、ヘッダーのメニューに足す。集計は、4番目の問い合わせ指定の仕組みのうち、この画面に要る分（GSC・Bing の日ごと・クエリ・ページの集計と比較）を先に作って使う
 - [ ] 作る前に確かめること（[data_sources.md](data_sources.md) §7 の GSC・Bing の項目）
@@ -112,14 +112,15 @@
 
 - [ ] 手元の DB を写して移す（それまでに貯めた Bing・GSC・GA4 のデータ）
 
-- [ ] 反映の仕組みを作る
+- [x] 反映の仕組みを作る（2026-11-28。VPS ではまだ動かしていない。手元で、書き出し → ビルド → Python の環境 → マイグレーション → 起動までを同じ形で通した）
   - `scripts/deploy_prod.sh`（手元で人が実行する。コミットを書き出して画面をビルドし、VPS へ送る）
-  - VPS 側のリリースの流れ（展開 → uv で環境 → `alembic upgrade head` → `current` の付け替え → 再起動）
-  - systemd のユニット（`glance-api`・`glance-cloudflared`）
-- [ ] VPS を整える（人がやる。手順は私が書く）
+  - VPS 側のリリースの流れ（`deploy/release.sh`。展開 → uv で環境 → `alembic upgrade head` → `current` の付け替え → 再起動 → 確かめる）
+  - systemd のユニット（`glance-api`・`glance-cloudflared`・毎日の取り込みの `glance-sync` とタイマー）
+  - 開設の手順書（[deploy/vps_setup.md](../../deploy/vps_setup.md)。下の「人がやる」作業の手順と、手元の DB の写し方）
+- [ ] VPS を整える（人がやる。手順は [deploy/vps_setup.md](../../deploy/vps_setup.md) §1〜§6）
   - Linux ユーザー `glance`、置き場所 `/srv/glance`
   - `/etc/glance/glance.env`（root・600）
-  - LeadHub の PostgreSQL のコンテナに、データベースと DB ユーザー `glance` を作る
+  - Glance 用の PostgreSQL のコンテナを動かす（LeadHub の DB のコンテナとは別。2026-11-28 利用者の決定）
 - [ ] ドメインと Cloudflare（人がやる）
   - crosia.jp を Cloudflare（LeadHub とは別のアカウント）に入れる。切り替える前に、今の DNS レコード（メールの MX など）が Cloudflare 側にそろっているか確かめる
   - Glance 用の Tunnel で `glance.crosia.jp` を VPS へ向ける
@@ -134,9 +135,8 @@
 
 | いつまでに | 決めること | 書いてある所 |
 |---|---|---|
-| 2番目 | バックアップの置き場所 | [infrastructure_design.md](infrastructure_design.md) §8 |
 | 2番目 | 手元でのバッチの動かし方（今はコマンドを打つ形。WSL の cron で自動にするかは、使ってみて決める） | — |
-| VPS に出すとき | 日次バッチの動かし方（systemd のタイマーなど） | [infrastructure_design.md](infrastructure_design.md) §8 |
+| VPS に出すとき | 日次バッチの動かし方 → systemd のタイマーで毎日動かす（2026-11-28 決定） | [technical_design.md](technical_design.md) §8 |
 | 3番目 | チャネルの対応表に日付を持たせるか、対応表の更新の仕方 | [database_design.md](database_design.md) §9 |
 | 5番目 | Gemini のモデルと接続先 | [overview.md](overview.md) §8 |
 | 5番目 | 全体サマリーと会話の細部（期間、変化の件数、示唆の数、AI に渡す行数の上限、打ち手の候補） | [ai_query_design.md](ai_query_design.md) §10 |
@@ -150,7 +150,7 @@
 ## 5. 注意
 
 - **Bing と GSC の古い日は、待つほど消える**（§2）。手元でバッチを動かすのを、数週間以上あけない。
-- **VPS に出すまでは、手元の DB が唯一の置き場所**: 手元の DB（Docker のボリューム）を消すと、Bing と16ヶ月より前の GSC は戻らない。バックアップを手元の外に置く。
+- **DB が唯一の置き場所**: バックアップは取らない（2026-11-28 利用者の決定）。手元の DB（Docker のボリューム）や本番の DB を消すと、Bing と16ヶ月より前の GSC は戻らない。
 - **同意画面が「テスト」のうちは、更新トークンが7日で切れる。** 手元では週に1回ログインし直す。手元のバッチも、トークンが切れていると取れない（ログインし直してから動かす）。VPS に出すときに「本番」にする。
-- **VPS のメモリ**: Glance は API だけが常駐し、約0.15GB 増える見込み。足りなくなったら 8GB のプランに上げる（[infrastructure_design.md](infrastructure_design.md) §3）。
+- **VPS のメモリ**: Glance で常駐するのは API（約0.15GB）と DB のコンテナ（約0.2GB）で、約0.35GB 増える見込み。足りなくなったら 8GB のプランに上げる（[infrastructure_design.md](infrastructure_design.md) §3）。
 - **本番の作業は人がやる**: VPS・Cloudflare・GCP の設定と反映は、私が手順とスクリプトを用意し、実行は人が行う。
